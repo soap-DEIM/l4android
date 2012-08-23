@@ -21,11 +21,13 @@
 #include <linux/fs.h>
 #include <linux/ftrace.h>
 #include <linux/hw_breakpoint.h>
+#include <linux/prefetch.h>
+#include <linux/stackprotector.h>
 #include <asm/uaccess.h>
 #include <asm/mmu_context.h>
-#include <asm/system.h>
 #include <asm/fpu.h>
 #include <asm/syscalls.h>
+#include <asm/switch_to.h>
 
 void show_regs(struct pt_regs * regs)
 {
@@ -69,7 +71,7 @@ void show_regs(struct pt_regs * regs)
 /*
  * Create a kernel thread
  */
-ATTRIB_NORET void kernel_thread_helper(void *arg, int (*fn)(void *))
+__noreturn void kernel_thread_helper(void *arg, int (*fn)(void *))
 {
 	do_exit(fn(arg));
 }
@@ -101,8 +103,6 @@ EXPORT_SYMBOL(kernel_thread);
 void start_thread(struct pt_regs *regs, unsigned long new_pc,
 		  unsigned long new_sp)
 {
-	set_fs(USER_DS);
-
 	regs->pr = 0;
 	regs->sr = SR_FD;
 	regs->pc = new_pc;
@@ -155,15 +155,6 @@ int dump_fpu(struct pt_regs *regs, elf_fpregset_t *fpu)
 	return fpvalid;
 }
 EXPORT_SYMBOL(dump_fpu);
-
-/*
- * This gets called before we allocate a new thread and copy
- * the current task into it.
- */
-void prepare_to_copy(struct task_struct *tsk)
-{
-	unlazy_fpu(tsk, task_pt_regs(tsk));
-}
 
 asmlinkage void ret_from_fork(void);
 
@@ -220,6 +211,10 @@ __notrace_funcgraph struct task_struct *
 __switch_to(struct task_struct *prev, struct task_struct *next)
 {
 	struct thread_struct *next_t = &next->thread;
+
+#if defined(CONFIG_CC_STACKPROTECTOR) && !defined(CONFIG_SMP)
+	__stack_chk_guard = next->stack_canary;
+#endif
 
 	unlazy_fpu(prev, task_pt_regs(prev));
 

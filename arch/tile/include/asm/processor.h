@@ -76,6 +76,17 @@ struct async_tlb {
 
 #ifdef CONFIG_HARDWALL
 struct hardwall_info;
+struct hardwall_task {
+	/* Which hardwall is this task tied to? (or NULL if none) */
+	struct hardwall_info *info;
+	/* Chains this task into the list at info->task_head. */
+	struct list_head list;
+};
+#ifdef __tilepro__
+#define HARDWALL_TYPES 1   /* udn */
+#else
+#define HARDWALL_TYPES 3   /* udn, idn, and ipi */
+#endif
 #endif
 
 struct thread_struct {
@@ -116,10 +127,8 @@ struct thread_struct {
 	unsigned long dstream_pf;
 #endif
 #ifdef CONFIG_HARDWALL
-	/* Is this task tied to an activated hardwall? */
-	struct hardwall_info *hardwall;
-	/* Chains this task into the list at hardwall->list. */
-	struct list_head hardwall_list;
+	/* Hardwall information for various resources. */
+	struct hardwall_task hardwall[HARDWALL_TYPES];
 #endif
 #if CHIP_HAS_TILE_DMA()
 	/* Async DMA TLB fault information */
@@ -210,10 +219,9 @@ static inline void release_thread(struct task_struct *dead_task)
 	/* Nothing for now */
 }
 
-/* Prepare to copy thread state - unlazy all lazy status. */
-#define prepare_to_copy(tsk)	do { } while (0)
-
 extern int kernel_thread(int (*fn)(void *), void *arg, unsigned long flags);
+
+extern int do_work_pending(struct pt_regs *regs, u32 flags);
 
 
 /*
@@ -255,10 +263,6 @@ static inline void cpu_relax(void)
 	barrier();
 }
 
-struct siginfo;
-extern void arch_coredump_signal(struct siginfo *, struct pt_regs *);
-#define arch_coredump_signal arch_coredump_signal
-
 /* Info on this processor (see fs/proc/cpuinfo.c) */
 struct seq_operations;
 extern const struct seq_operations cpuinfo_op;
@@ -268,9 +272,6 @@ extern char chip_model[64];
 
 /* Data on which physical memory controller corresponds to which NUMA node. */
 extern int node_controller[];
-
-/* Do we dump information to the console when a user application crashes? */
-extern int show_crashinfo;
 
 #if CHIP_HAS_CBOX_HOME_MAP()
 /* Does the heap allocator return hash-for-home pages by default? */

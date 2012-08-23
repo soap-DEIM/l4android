@@ -41,7 +41,9 @@
 /* MAS registers bit definitions */
 
 #define MAS0_TLBSEL(x)		(((x) << 28) & 0x30000000)
-#define MAS0_ESEL(x)		(((x) << 16) & 0x0FFF0000)
+#define MAS0_ESEL_MASK		0x0FFF0000
+#define MAS0_ESEL_SHIFT		16
+#define MAS0_ESEL(x)		(((x) << MAS0_ESEL_SHIFT) & MAS0_ESEL_MASK)
 #define MAS0_NV(x)		((x) & 0x00000FFF)
 #define MAS0_HES		0x00004000
 #define MAS0_WQ_ALLWAYS		0x00000000
@@ -65,6 +67,7 @@
 #define MAS2_M			0x00000004
 #define MAS2_G			0x00000002
 #define MAS2_E			0x00000001
+#define MAS2_WIMGE_MASK		0x0000001f
 #define MAS2_EPN_MASK(size)		(~0 << (size + 10))
 #define MAS2_VAL(addr, size, flags)	((addr) & MAS2_EPN_MASK(size) | (flags))
 
@@ -79,6 +82,7 @@
 #define MAS3_SW			0x00000004
 #define MAS3_UR			0x00000002
 #define MAS3_SR			0x00000001
+#define MAS3_BAP_MASK		0x0000003f
 #define MAS3_SPSIZE		0x0000003e
 #define MAS3_SPSIZE_SHIFT	1
 
@@ -100,6 +104,8 @@
 #define MAS4_TSIZED_MASK	0x00000f80	/* Default TSIZE */
 #define MAS4_TSIZED_SHIFT	7
 
+#define MAS5_SGS		0x80000000
+
 #define MAS6_SPID0		0x3FFF0000
 #define MAS6_SPID1		0x00007FFE
 #define MAS6_ISIZE(x)		MAS1_TSIZE(x)
@@ -113,6 +119,10 @@
 #define MAS6_ISIZE_SHIFT	7
 
 #define MAS7_RPN		0xFFFFFFFF
+
+#define MAS8_TGS		0x80000000 /* Guest space */
+#define MAS8_VF			0x40000000 /* Virtualization Fault */
+#define MAS8_TLPID		0x000000ff
 
 /* Bit definitions for MMUCFG */
 #define MMUCFG_MAVN	0x00000003	/* MMU Architecture Version Number */
@@ -137,6 +147,21 @@
 #define MMUCSR0_TLB2PS	0x00078000	/* TLB2 Page Size */
 #define MMUCSR0_TLB3PS	0x00780000	/* TLB3 Page Size */
 
+/* MMUCFG bits */
+#define MMUCFG_MAVN_NASK	0x00000003
+#define MMUCFG_MAVN_V1_0	0x00000000
+#define MMUCFG_MAVN_V2_0	0x00000001
+#define MMUCFG_NTLB_MASK	0x0000000c
+#define MMUCFG_NTLB_SHIFT	2
+#define MMUCFG_PIDSIZE_MASK	0x000007c0
+#define MMUCFG_PIDSIZE_SHIFT	6
+#define MMUCFG_TWC		0x00008000
+#define MMUCFG_LRAT		0x00010000
+#define MMUCFG_RASIZE_MASK	0x00fe0000
+#define MMUCFG_RASIZE_SHIFT	17
+#define MMUCFG_LPIDSIZE_MASK	0x0f000000
+#define MMUCFG_LPIDSIZE_SHIFT	24
+
 /* TLBnCFG encoding */
 #define TLBnCFG_N_ENTRY		0x00000fff	/* number of entries */
 #define TLBnCFG_HES		0x00002000	/* HW select supported */
@@ -149,6 +174,7 @@
 #define TLBnCFG_MAXSIZE		0x000f0000	/* Maximum Page Size (v1.0) */
 #define TLBnCFG_MAXSIZE_SHIFT	16
 #define TLBnCFG_ASSOC		0xff000000	/* Associativity */
+#define TLBnCFG_ASSOC_SHIFT	24
 
 /* TLBnPS encoding */
 #define TLBnPS_4K		0x00000004
@@ -196,6 +222,15 @@ typedef struct {
 	unsigned int	id;
 	unsigned int	active;
 	unsigned long	vdso_base;
+#ifdef CONFIG_PPC_ICSWX
+	struct spinlock *cop_lockp;	/* guard cop related stuff */
+	unsigned long acop;		/* mask of enabled coprocessor types */
+#endif /* CONFIG_PPC_ICSWX */
+#ifdef CONFIG_PPC_MM_SLICES
+	u64 low_slices_psize;   /* SLB page size encodings */
+	u64 high_slices_psize;  /* 4 bits per slice for now */
+	u16 user_psize;         /* page size index */
+#endif
 } mm_context_t;
 
 /* Page size definitions, common between 32 and 64-bit
@@ -228,6 +263,17 @@ extern struct mmu_psize_def mmu_psize_defs[MMU_PAGE_COUNT];
 
 extern int mmu_linear_psize;
 extern int mmu_vmemmap_psize;
+
+#ifdef CONFIG_PPC64
+extern unsigned long linear_map_top;
+
+/*
+ * 64-bit booke platforms don't load the tlb in the tlb miss handler code.
+ * HUGETLB_NEED_PRELOAD handles this - it causes huge_ptep_set_access_flags to
+ * return 1, indicating that the tlb requires preloading.
+ */
+#define HUGETLB_NEED_PRELOAD
+#endif
 
 #endif /* !__ASSEMBLY__ */
 

@@ -65,7 +65,7 @@ struct ceph_file_layout {
 	__le32 fl_object_stripe_unit;  /* UNUSED.  for per-object parity, if any */
 
 	/* object -> pg layout */
-	__le32 fl_pg_preferred; /* preferred primary for pg (-1 for none) */
+	__le32 fl_unused;       /* unused; used to be preferred primary (-1) */
 	__le32 fl_pg_pool;      /* namespace, crush ruleset, rep level */
 } __attribute__ ((packed));
 
@@ -313,6 +313,7 @@ enum {
 	CEPH_MDS_OP_GETATTR    = 0x00101,
 	CEPH_MDS_OP_LOOKUPHASH = 0x00102,
 	CEPH_MDS_OP_LOOKUPPARENT = 0x00103,
+	CEPH_MDS_OP_LOOKUPINO  = 0x00104,
 
 	CEPH_MDS_OP_SETXATTR   = 0x01105,
 	CEPH_MDS_OP_RMXATTR    = 0x01106,
@@ -383,7 +384,7 @@ union ceph_mds_request_args {
 		__le32 stripe_count;         /* ... */
 		__le32 object_size;
 		__le32 file_replication;
-		__le32 preferred;
+		__le32 unused;               /* used to be preferred osd */
 	} __attribute__ ((packed)) open;
 	struct {
 		__le32 flags;

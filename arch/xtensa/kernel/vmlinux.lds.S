@@ -83,7 +83,6 @@ SECTIONS
 
   _text = .;
   _stext = .;
-  _ftext = .;
 
   .text :
   {
@@ -112,7 +111,7 @@ SECTIONS
   EXCEPTION_TABLE(16)
   /* Data section */
 
-  _fdata = .;
+  _sdata = .;
   RW_DATA_SECTION(XCHAL_ICACHE_LINESIZE, PAGE_SIZE, THREAD_SIZE)
   _edata = .;
 
@@ -155,7 +154,7 @@ SECTIONS
     INIT_RAM_FS
   }
 
-  PERCPU(XCHAL_ICACHE_LINESIZE, PAGE_SIZE)
+  PERCPU_SECTION(XCHAL_ICACHE_LINESIZE)
 
   /* We need this dummy segment here */
 

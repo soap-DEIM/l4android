@@ -11,11 +11,12 @@
  *  it under the terms of the GNU General Public License version 2 as
  *  published by the Free Software Foundation.
  */
+#include <linux/gpio.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/platform_device.h>
-#include <linux/sysdev.h>
+#include <linux/syscore_ops.h>
 #include <linux/major.h>
 #include <linux/fb.h>
 #include <linux/interrupt.h>
@@ -42,7 +43,6 @@
 #include <asm/hardware/sa1111.h>
 
 #include <mach/pxa25x.h>
-#include <mach/gpio.h>
 #include <mach/audio.h>
 #include <mach/lubbock.h>
 #include <mach/udc.h>
@@ -170,37 +170,28 @@ static void __init lubbock_init_irq(void)
 		set_irq_flags(irq, IRQF_VALID | IRQF_PROBE);
 	}
 
-	irq_set_chained_handler(IRQ_GPIO(0), lubbock_irq_handler);
-	irq_set_irq_type(IRQ_GPIO(0), IRQ_TYPE_EDGE_FALLING);
+	irq_set_chained_handler(PXA_GPIO_TO_IRQ(0), lubbock_irq_handler);
+	irq_set_irq_type(PXA_GPIO_TO_IRQ(0), IRQ_TYPE_EDGE_FALLING);
 }
 
 #ifdef CONFIG_PM
 
-static int lubbock_irq_resume(struct sys_device *dev)
+static void lubbock_irq_resume(void)
 {
 	LUB_IRQ_MASK_EN = lubbock_irq_enabled;
-	return 0;
 }
 
-static struct sysdev_class lubbock_irq_sysclass = {
-	.name = "cpld_irq",
+static struct syscore_ops lubbock_irq_syscore_ops = {
 	.resume = lubbock_irq_resume,
-};
-
-static struct sys_device lubbock_irq_device = {
-	.cls = &lubbock_irq_sysclass,
 };
 
 static int __init lubbock_irq_device_init(void)
 {
-	int ret = -ENODEV;
-
 	if (machine_is_lubbock()) {
-		ret = sysdev_class_register(&lubbock_irq_sysclass);
-		if (ret == 0)
-			ret = sysdev_register(&lubbock_irq_device);
+		register_syscore_ops(&lubbock_irq_syscore_ops);
+		return 0;
 	}
-	return ret;
+	return -ENODEV;
 }
 
 device_initcall(lubbock_irq_device_init);
@@ -232,6 +223,7 @@ static struct resource sa1111_resources[] = {
 
 static struct sa1111_platform_data sa1111_info = {
 	.irq_base	= LUBBOCK_SA1111_IRQ_BASE,
+	.disable_devs	= SA1111_DEVID_SAC,
 };
 
 static struct platform_device sa1111_device = {
@@ -562,6 +554,8 @@ MACHINE_START(LUBBOCK, "Intel DBPXA250 Development Platform (aka Lubbock)")
 	.map_io		= lubbock_map_io,
 	.nr_irqs	= LUBBOCK_NR_IRQS,
 	.init_irq	= lubbock_init_irq,
+	.handle_irq	= pxa25x_handle_irq,
 	.timer		= &pxa_timer,
 	.init_machine	= lubbock_init,
+	.restart	= pxa_restart,
 MACHINE_END

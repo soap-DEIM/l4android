@@ -20,6 +20,7 @@
  * MA 02110-1301, USA.
  */
 
+#include <linux/err.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/clockchips.h>
@@ -99,11 +100,6 @@ static cycle_t timrotv1_get_cycles(struct clocksource *cs)
 {
 	return ~((__raw_readl(mxs_timrot_base + HW_TIMROT_TIMCOUNTn(1))
 			& 0xffff0000) >> 16);
-}
-
-static cycle_t timrotv2_get_cycles(struct clocksource *cs)
-{
-	return ~__raw_readl(mxs_timrot_base + HW_TIMROT_RUNNING_COUNTn(1));
 }
 
 static int timrotv1_set_next_event(unsigned long evt,
@@ -230,8 +226,8 @@ static int __init mxs_clockevent_init(struct clk *timer_clk)
 static struct clocksource clocksource_mxs = {
 	.name		= "mxs_timer",
 	.rating		= 200,
-	.read		= timrotv2_get_cycles,
-	.mask		= CLOCKSOURCE_MASK(32),
+	.read		= timrotv1_get_cycles,
+	.mask		= CLOCKSOURCE_MASK(16),
 	.flags		= CLOCK_SOURCE_IS_CONTINUOUS,
 };
 
@@ -239,19 +235,26 @@ static int __init mxs_clocksource_init(struct clk *timer_clk)
 {
 	unsigned int c = clk_get_rate(timer_clk);
 
-	if (timrot_is_v1()) {
-		clocksource_mxs.read = timrotv1_get_cycles;
-		clocksource_mxs.mask = CLOCKSOURCE_MASK(16);
-	}
-
-	clocksource_register_hz(&clocksource_mxs, c);
+	if (timrot_is_v1())
+		clocksource_register_hz(&clocksource_mxs, c);
+	else
+		clocksource_mmio_init(mxs_timrot_base + HW_TIMROT_RUNNING_COUNTn(1),
+			"mxs_timer", c, 200, 32, clocksource_mmio_readl_down);
 
 	return 0;
 }
 
-void __init mxs_timer_init(struct clk *timer_clk, int irq)
+void __init mxs_timer_init(int irq)
 {
-	clk_enable(timer_clk);
+	struct clk *timer_clk;
+
+	timer_clk = clk_get_sys("timrot", NULL);
+	if (IS_ERR(timer_clk)) {
+		pr_err("%s: failed to get clk\n", __func__);
+		return;
+	}
+
+	clk_prepare_enable(timer_clk);
 
 	/*
 	 * Initialize timers to a known state

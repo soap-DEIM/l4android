@@ -25,22 +25,12 @@ typedef unsigned long address_t;
 #define cpu_number_map(cpu)	(cpu)
 #define cpu_logical_map(cpu)	(cpu)
 
-extern void smp_send_reschedule(int cpu);
 extern void smp_send_all_nop(void);
 
 extern void arch_send_call_function_single_ipi(int cpu);
 extern void arch_send_call_function_ipi_mask(const struct cpumask *mask);
 
 #endif /* !ASSEMBLY */
-
-/*
- *	This magic constant controls our willingness to transfer
- *      a process across CPUs. Such a transfer incurs cache and tlb
- *      misses. The current value is inherited from i386. Still needs
- *      to be tuned for parisc.
- */
- 
-#define PROC_CHANGE_PENALTY	15		/* Schedule penalty */
 
 #define raw_smp_processor_id()	(current_thread_info()->cpu)
 
@@ -59,6 +49,5 @@ static inline void __cpu_die (unsigned int cpu) {
   while(1)
     ;
 }
-extern int __cpu_up (unsigned int cpu);
 
 #endif /*  __ASM_SMP_H */

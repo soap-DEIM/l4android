@@ -7,7 +7,7 @@
 #include <asm/mmu_context.h>
 #include <hwregs/asm/mmu_defs_asm.h>
 #include <hwregs/supp_reg.h>
-#include <asm/atomic.h>
+#include <linux/atomic.h>
 
 #include <linux/err.h>
 #include <linux/init.h>
@@ -81,7 +81,7 @@ void __init smp_prepare_cpus(unsigned int max_cpus)
 
 	/* Mark all possible CPUs as present */
 	for (i = 0; i < max_cpus; i++)
-	    cpu_set(i, phys_cpu_present_map);
+		cpumask_set_cpu(i, &phys_cpu_present_map);
 }
 
 void __devinit smp_prepare_boot_cpu(void)
@@ -98,7 +98,7 @@ void __devinit smp_prepare_boot_cpu(void)
 	SUPP_REG_WR(RW_MM_TLB_PGD, pgd);
 
 	set_cpu_online(0, true);
-	cpu_set(0, phys_cpu_present_map);
+	cpumask_set_cpu(0, &phys_cpu_present_map);
 	set_cpu_possible(0, true);
 }
 
@@ -108,16 +108,12 @@ void __init smp_cpus_done(unsigned int max_cpus)
 
 /* Bring one cpu online.*/
 static int __init
-smp_boot_one_cpu(int cpuid)
+smp_boot_one_cpu(int cpuid, struct task_struct idle)
 {
 	unsigned timeout;
-	struct task_struct *idle;
-	cpumask_t cpu_mask = CPU_MASK_NONE;
+	cpumask_t cpu_mask;
 
-	idle = fork_idle(cpuid);
-	if (IS_ERR(idle))
-		panic("SMP: fork failed for CPU:%d", cpuid);
-
+	cpumask_clear(&cpu_mask);
 	task_thread_info(idle)->cpu = cpuid;
 
 	/* Information to the CPU that is about to boot */
@@ -125,10 +121,10 @@ smp_boot_one_cpu(int cpuid)
 	cpu_now_booting = cpuid;
 
 	/* Kick it */
-	cpu_set(cpuid, cpu_online_map);
-	cpu_set(cpuid, cpu_mask);
+	set_cpu_online(cpuid, true);
+	cpumask_set_cpu(cpuid, &cpu_mask);
 	send_ipi(IPI_BOOT, 0, cpu_mask);
-	cpu_clear(cpuid, cpu_online_map);
+	set_cpu_online(cpuid, false);
 
 	/* Wait for CPU to come online */
 	for (timeout = 0; timeout < 10000; timeout++) {
@@ -140,9 +136,6 @@ smp_boot_one_cpu(int cpuid)
 		udelay(100);
 		barrier();
 	}
-
-	put_task_struct(idle);
-	idle = NULL;
 
 	printk(KERN_CRIT "SMP: CPU:%d is stuck.\n", cpuid);
 	return -1;
@@ -176,7 +169,7 @@ void __init smp_callin(void)
 	notify_cpu_starting(cpu);
 	local_irq_enable();
 
-	cpu_set(cpu, cpu_online_map);
+	set_cpu_online(cpu, true);
 	cpu_idle();
 }
 
@@ -206,16 +199,17 @@ int setup_profiling_timer(unsigned int multiplier)
  */
 unsigned long cache_decay_ticks = 1;
 
-int __cpuinit __cpu_up(unsigned int cpu)
+int __cpuinit __cpu_up(unsigned int cpu, struct task_struct *tidle)
 {
-	smp_boot_one_cpu(cpu);
+	smp_boot_one_cpu(cpu, tidle);
 	return cpu_online(cpu) ? 0 : -ENOSYS;
 }
 
 void smp_send_reschedule(int cpu)
 {
-	cpumask_t cpu_mask = CPU_MASK_NONE;
-	cpu_set(cpu, cpu_mask);
+	cpumask_t cpu_mask;
+	cpumask_clear(&cpu_mask);
+	cpumask_set_cpu(cpu, &cpu_mask);
 	send_ipi(IPI_SCHEDULE, 0, cpu_mask);
 }
 
@@ -232,7 +226,7 @@ void flush_tlb_common(struct mm_struct* mm, struct vm_area_struct* vma, unsigned
 
 	spin_lock_irqsave(&tlbstate_lock, flags);
 	cpu_mask = (mm == FLUSH_ALL ? cpu_all_mask : *mm_cpumask(mm));
-	cpu_clear(smp_processor_id(), cpu_mask);
+	cpumask_clear_cpu(smp_processor_id(), &cpu_mask);
 	flush_mm = mm;
 	flush_vma = vma;
 	flush_addr = addr;
@@ -277,10 +271,10 @@ int send_ipi(int vector, int wait, cpumask_t cpu_mask)
 	int ret = 0;
 
 	/* Calculate CPUs to send to. */
-	cpus_and(cpu_mask, cpu_mask, cpu_online_map);
+	cpumask_and(&cpu_mask, &cpu_mask, cpu_online_mask);
 
 	/* Send the IPI. */
-	for_each_cpu_mask(i, cpu_mask)
+	for_each_cpu(i, &cpu_mask)
 	{
 		ipi.vector |= vector;
 		REG_WR(intr_vect, irq_regs[i], rw_ipi, ipi);
@@ -288,7 +282,7 @@ int send_ipi(int vector, int wait, cpumask_t cpu_mask)
 
 	/* Wait for IPI to finish on other CPUS */
 	if (wait) {
-		for_each_cpu_mask(i, cpu_mask) {
+		for_each_cpu(i, &cpu_mask) {
                         int j;
                         for (j = 0 ; j < 1000; j++) {
 				ipi = REG_RD(intr_vect, irq_regs[i], rw_ipi);
@@ -314,11 +308,12 @@ int send_ipi(int vector, int wait, cpumask_t cpu_mask)
  */
 int smp_call_function(void (*func)(void *info), void *info, int wait)
 {
-	cpumask_t cpu_mask = CPU_MASK_ALL;
+	cpumask_t cpu_mask;
 	struct call_data_struct data;
 	int ret;
 
-	cpu_clear(smp_processor_id(), cpu_mask);
+	cpumask_setall(&cpu_mask);
+	cpumask_clear_cpu(smp_processor_id(), &cpu_mask);
 
 	WARN_ON(irqs_disabled());
 
@@ -342,15 +337,18 @@ irqreturn_t crisv32_ipi_interrupt(int irq, void *dev_id)
 
 	ipi = REG_RD(intr_vect, irq_regs[smp_processor_id()], rw_ipi);
 
+	if (ipi.vector & IPI_SCHEDULE) {
+		scheduler_ipi();
+	}
 	if (ipi.vector & IPI_CALL) {
-	         func(info);
+		func(info);
 	}
 	if (ipi.vector & IPI_FLUSH_TLB) {
-		     if (flush_mm == FLUSH_ALL)
-			 __flush_tlb_all();
-		     else if (flush_vma == FLUSH_ALL)
+		if (flush_mm == FLUSH_ALL)
+			__flush_tlb_all();
+		else if (flush_vma == FLUSH_ALL)
 			__flush_tlb_mm(flush_mm);
-		     else
+		else
 			__flush_tlb_page(flush_vma, flush_addr);
 	}
 

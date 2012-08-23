@@ -48,12 +48,10 @@ static struct socrates_fpga_irq_info fpga_irqs[SOCRATES_FPGA_NUM_IRQS] = {
 	[8] = {0, IRQ_TYPE_LEVEL_HIGH},
 };
 
-#define socrates_fpga_irq_to_hw(virq)    ((unsigned int)irq_map[virq].hwirq)
-
 static DEFINE_RAW_SPINLOCK(socrates_fpga_pic_lock);
 
 static void __iomem *socrates_fpga_pic_iobase;
-static struct irq_host *socrates_fpga_pic_irq_host;
+static struct irq_domain *socrates_fpga_pic_irq_host;
 static unsigned int socrates_fpga_irqs[3];
 
 static inline uint32_t socrates_fpga_pic_read(int reg)
@@ -110,10 +108,8 @@ void socrates_fpga_pic_cascade(unsigned int irq, struct irq_desc *desc)
 static void socrates_fpga_pic_ack(struct irq_data *d)
 {
 	unsigned long flags;
-	unsigned int hwirq, irq_line;
+	unsigned int irq_line, hwirq = irqd_to_hwirq(d);
 	uint32_t mask;
-
-	hwirq = socrates_fpga_irq_to_hw(d->irq);
 
 	irq_line = fpga_irqs[hwirq].irq_line;
 	raw_spin_lock_irqsave(&socrates_fpga_pic_lock, flags);
@@ -127,11 +123,9 @@ static void socrates_fpga_pic_ack(struct irq_data *d)
 static void socrates_fpga_pic_mask(struct irq_data *d)
 {
 	unsigned long flags;
-	unsigned int hwirq;
+	unsigned int hwirq = irqd_to_hwirq(d);
 	int irq_line;
 	u32 mask;
-
-	hwirq = socrates_fpga_irq_to_hw(d->irq);
 
 	irq_line = fpga_irqs[hwirq].irq_line;
 	raw_spin_lock_irqsave(&socrates_fpga_pic_lock, flags);
@@ -145,11 +139,9 @@ static void socrates_fpga_pic_mask(struct irq_data *d)
 static void socrates_fpga_pic_mask_ack(struct irq_data *d)
 {
 	unsigned long flags;
-	unsigned int hwirq;
+	unsigned int hwirq = irqd_to_hwirq(d);
 	int irq_line;
 	u32 mask;
-
-	hwirq = socrates_fpga_irq_to_hw(d->irq);
 
 	irq_line = fpga_irqs[hwirq].irq_line;
 	raw_spin_lock_irqsave(&socrates_fpga_pic_lock, flags);
@@ -164,11 +156,9 @@ static void socrates_fpga_pic_mask_ack(struct irq_data *d)
 static void socrates_fpga_pic_unmask(struct irq_data *d)
 {
 	unsigned long flags;
-	unsigned int hwirq;
+	unsigned int hwirq = irqd_to_hwirq(d);
 	int irq_line;
 	u32 mask;
-
-	hwirq = socrates_fpga_irq_to_hw(d->irq);
 
 	irq_line = fpga_irqs[hwirq].irq_line;
 	raw_spin_lock_irqsave(&socrates_fpga_pic_lock, flags);
@@ -182,11 +172,9 @@ static void socrates_fpga_pic_unmask(struct irq_data *d)
 static void socrates_fpga_pic_eoi(struct irq_data *d)
 {
 	unsigned long flags;
-	unsigned int hwirq;
+	unsigned int hwirq = irqd_to_hwirq(d);
 	int irq_line;
 	u32 mask;
-
-	hwirq = socrates_fpga_irq_to_hw(d->irq);
 
 	irq_line = fpga_irqs[hwirq].irq_line;
 	raw_spin_lock_irqsave(&socrates_fpga_pic_lock, flags);
@@ -201,11 +189,9 @@ static int socrates_fpga_pic_set_type(struct irq_data *d,
 		unsigned int flow_type)
 {
 	unsigned long flags;
-	unsigned int hwirq;
+	unsigned int hwirq = irqd_to_hwirq(d);
 	int polarity;
 	u32 mask;
-
-	hwirq = socrates_fpga_irq_to_hw(d->irq);
 
 	if (fpga_irqs[hwirq].type != IRQ_TYPE_NONE)
 		return -EINVAL;
@@ -241,7 +227,7 @@ static struct irq_chip socrates_fpga_pic_chip = {
 	.irq_set_type	= socrates_fpga_pic_set_type,
 };
 
-static int socrates_fpga_pic_host_map(struct irq_host *h, unsigned int virq,
+static int socrates_fpga_pic_host_map(struct irq_domain *h, unsigned int virq,
 		irq_hw_number_t hwirq)
 {
 	/* All interrupts are LEVEL sensitive */
@@ -252,7 +238,7 @@ static int socrates_fpga_pic_host_map(struct irq_host *h, unsigned int virq,
 	return 0;
 }
 
-static int socrates_fpga_pic_host_xlate(struct irq_host *h,
+static int socrates_fpga_pic_host_xlate(struct irq_domain *h,
 		struct device_node *ct,	const u32 *intspec, unsigned int intsize,
 		irq_hw_number_t *out_hwirq, unsigned int *out_flags)
 {
@@ -283,7 +269,7 @@ static int socrates_fpga_pic_host_xlate(struct irq_host *h,
 	return 0;
 }
 
-static struct irq_host_ops socrates_fpga_pic_host_ops = {
+static const struct irq_domain_ops socrates_fpga_pic_host_ops = {
 	.map    = socrates_fpga_pic_host_map,
 	.xlate  = socrates_fpga_pic_host_xlate,
 };
@@ -293,10 +279,9 @@ void socrates_fpga_pic_init(struct device_node *pic)
 	unsigned long flags;
 	int i;
 
-	/* Setup an irq_host structure */
-	socrates_fpga_pic_irq_host = irq_alloc_host(pic, IRQ_HOST_MAP_LINEAR,
-			SOCRATES_FPGA_NUM_IRQS,	&socrates_fpga_pic_host_ops,
-			SOCRATES_FPGA_NUM_IRQS);
+	/* Setup an irq_domain structure */
+	socrates_fpga_pic_irq_host = irq_domain_add_linear(pic,
+		    SOCRATES_FPGA_NUM_IRQS, &socrates_fpga_pic_host_ops, NULL);
 	if (socrates_fpga_pic_irq_host == NULL) {
 		pr_err("FPGA PIC: Unable to allocate host\n");
 		return;

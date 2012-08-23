@@ -1,7 +1,6 @@
 
 #include <asm/cache.h>
 #include <asm/ptrace.h>
-#include <asm/system.h>
 #include <asm/pgtable.h>
 
 #include <asm-generic/vmlinux.lds.h>
@@ -209,6 +208,7 @@ SECTIONS {
 	data : {
 	} :data
 	.data : AT(ADDR(.data) - LOAD_OFFSET) {
+		_sdata  =  .;
 		INIT_TASK_DATA(PAGE_SIZE)
 		CACHELINE_ALIGNED_DATA(SMP_CACHE_BYTES)
 		READ_MOSTLY_DATA(SMP_CACHE_BYTES)

@@ -13,8 +13,6 @@
  *
  */
 
-#ifdef __KERNEL__
-
 #ifndef _LINUX_BITOPS_H
 #error only <linux/bitops.h> can be included directly
 #endif
@@ -63,7 +61,7 @@ extern const char _ni_bitmap[];
 extern const char _zb_findmap[];
 extern const char _sb_findmap[];
 
-#ifndef __s390x__
+#ifndef CONFIG_64BIT
 
 #define __BITOPS_ALIGN		3
 #define __BITOPS_WORDSIZE	32
@@ -83,7 +81,7 @@ extern const char _sb_findmap[];
 		: "d" (__val), "Q" (*(unsigned long *) __addr)	\
 		: "cc");
 
-#else /* __s390x__ */
+#else /* CONFIG_64BIT */
 
 #define __BITOPS_ALIGN		7
 #define __BITOPS_WORDSIZE	64
@@ -103,7 +101,7 @@ extern const char _sb_findmap[];
 		: "d" (__val), "Q" (*(unsigned long *) __addr)	\
 		: "cc");
 
-#endif /* __s390x__ */
+#endif /* CONFIG_64BIT */
 
 #define __BITOPS_WORDS(bits) (((bits)+__BITOPS_WORDSIZE-1)/__BITOPS_WORDSIZE)
 #define __BITOPS_BARRIER() asm volatile("" : : : "memory")
@@ -412,7 +410,7 @@ static inline unsigned long __ffz_word_loop(const unsigned long *addr,
 	unsigned long bytes = 0;
 
 	asm volatile(
-#ifndef __s390x__
+#ifndef CONFIG_64BIT
 		"	ahi	%1,-1\n"
 		"	sra	%1,5\n"
 		"	jz	1f\n"
@@ -449,7 +447,7 @@ static inline unsigned long __ffs_word_loop(const unsigned long *addr,
 	unsigned long bytes = 0;
 
 	asm volatile(
-#ifndef __s390x__
+#ifndef CONFIG_64BIT
 		"	ahi	%1,-1\n"
 		"	sra	%1,5\n"
 		"	jz	1f\n"
@@ -481,7 +479,7 @@ static inline unsigned long __ffs_word_loop(const unsigned long *addr,
  */
 static inline unsigned long __ffz_word(unsigned long nr, unsigned long word)
 {
-#ifdef __s390x__
+#ifdef CONFIG_64BIT
 	if ((word & 0xffffffff) == 0xffffffff) {
 		word >>= 32;
 		nr += 32;
@@ -505,7 +503,7 @@ static inline unsigned long __ffz_word(unsigned long nr, unsigned long word)
  */
 static inline unsigned long __ffs_word(unsigned long nr, unsigned long word)
 {
-#ifdef __s390x__
+#ifdef CONFIG_64BIT
 	if ((word & 0xffffffff) == 0) {
 		word >>= 32;
 		nr += 32;
@@ -546,7 +544,7 @@ static inline unsigned long __load_ulong_le(const unsigned long *p,
 	unsigned long word;
 
 	p = (unsigned long *)((unsigned long) p + offset);
-#ifndef __s390x__
+#ifndef CONFIG_64BIT
 	asm volatile(
 		"	ic	%0,%O1(%R1)\n"
 		"	icm	%0,2,%O1+1(%R1)\n"
@@ -621,6 +619,7 @@ static inline unsigned long find_first_zero_bit(const unsigned long *addr,
 	bits = __ffz_word(bytes*8, __load_ulong_be(addr, bytes));
 	return (bits < size) ? bits : size;
 }
+#define find_first_zero_bit find_first_zero_bit
 
 /**
  * find_first_bit - find the first set bit in a memory region
@@ -641,6 +640,7 @@ static inline unsigned long find_first_bit(const unsigned long * addr,
 	bits = __ffs_word(bytes*8, __load_ulong_be(addr, bytes));
 	return (bits < size) ? bits : size;
 }
+#define find_first_bit find_first_bit
 
 /**
  * find_next_zero_bit - find the first zero bit in a memory region
@@ -677,6 +677,7 @@ static inline int find_next_zero_bit (const unsigned long * addr,
 	}
 	return offset + find_first_zero_bit(p, size);
 }
+#define find_next_zero_bit find_next_zero_bit
 
 /**
  * find_next_bit - find the first set bit in a memory region
@@ -713,6 +714,7 @@ static inline int find_next_bit (const unsigned long * addr,
 	}
 	return offset + find_first_bit(p, size);
 }
+#define find_next_bit find_next_bit
 
 /*
  * Every architecture must define this function. It's the fastest
@@ -742,41 +744,6 @@ static inline int sched_find_first_bit(unsigned long *b)
  *    23 22 21 20 19 18 17 16 31 30 29 28 27 26 25 24
  */
 
-static inline void __set_bit_le(unsigned long nr, void *addr)
-{
-	__set_bit(nr ^ (__BITOPS_WORDSIZE - 8), addr);
-}
-
-static inline void __clear_bit_le(unsigned long nr, void *addr)
-{
-	__clear_bit(nr ^ (__BITOPS_WORDSIZE - 8), addr);
-}
-
-static inline int __test_and_set_bit_le(unsigned long nr, void *addr)
-{
-	return __test_and_set_bit(nr ^ (__BITOPS_WORDSIZE - 8), addr);
-}
-
-static inline int test_and_set_bit_le(unsigned long nr, void *addr)
-{
-	return test_and_set_bit(nr ^ (__BITOPS_WORDSIZE - 8), addr);
-}
-
-static inline int __test_and_clear_bit_le(unsigned long nr, void *addr)
-{
-	return __test_and_clear_bit(nr ^ (__BITOPS_WORDSIZE - 8), addr);
-}
-
-static inline int test_and_clear_bit_le(unsigned long nr, void *addr)
-{
-	return test_and_clear_bit(nr ^ (__BITOPS_WORDSIZE - 8), addr);
-}
-
-static inline int test_bit_le(unsigned long nr, const void *addr)
-{
-	return test_bit(nr ^ (__BITOPS_WORDSIZE - 8), addr);
-}
-
 static inline int find_first_zero_bit_le(void *vaddr, unsigned int size)
 {
 	unsigned long bytes, bits;
@@ -787,6 +754,7 @@ static inline int find_first_zero_bit_le(void *vaddr, unsigned int size)
 	bits = __ffz_word(bytes*8, __load_ulong_le(vaddr, bytes));
 	return (bits < size) ? bits : size;
 }
+#define find_first_zero_bit_le find_first_zero_bit_le
 
 static inline int find_next_zero_bit_le(void *vaddr, unsigned long size,
 					  unsigned long offset)
@@ -816,6 +784,7 @@ static inline int find_next_zero_bit_le(void *vaddr, unsigned long size,
         }
 	return offset + find_first_zero_bit_le(p, size);
 }
+#define find_next_zero_bit_le find_next_zero_bit_le
 
 static inline unsigned long find_first_bit_le(void *vaddr, unsigned long size)
 {
@@ -827,6 +796,7 @@ static inline unsigned long find_first_bit_le(void *vaddr, unsigned long size)
 	bits = __ffs_word(bytes*8, __load_ulong_le(vaddr, bytes));
 	return (bits < size) ? bits : size;
 }
+#define find_first_bit_le find_first_bit_le
 
 static inline int find_next_bit_le(void *vaddr, unsigned long size,
 				     unsigned long offset)
@@ -856,13 +826,10 @@ static inline int find_next_bit_le(void *vaddr, unsigned long size,
 	}
 	return offset + find_first_bit_le(p, size);
 }
+#define find_next_bit_le find_next_bit_le
 
-#define ext2_set_bit_atomic(lock, nr, addr)	\
-	test_and_set_bit_le(nr, addr)
-#define ext2_clear_bit_atomic(lock, nr, addr)	\
-	test_and_clear_bit_le(nr, addr)
+#include <asm-generic/bitops/le.h>
 
-
-#endif /* __KERNEL__ */
+#include <asm-generic/bitops/ext2-atomic-setbit.h>
 
 #endif /* _S390_BITOPS_H */

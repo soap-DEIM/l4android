@@ -23,7 +23,7 @@
 #include <linux/stddef.h>
 #include <linux/elf.h>
 #include <linux/ptrace.h>
-#include <linux/module.h>
+#include <linux/ratelimit.h>
 
 #include <asm/sigcontext.h>
 #include <asm/ucontext.h>
@@ -33,6 +33,7 @@
 #include <asm/cacheflush.h>
 #include <asm/syscalls.h>
 #include <asm/vdso.h>
+#include <asm/switch_to.h>
 
 #include "signal.h"
 
@@ -334,7 +335,7 @@ int sys_swapcontext(struct ucontext __user *old_ctx,
 
 	if (__copy_from_user(&set, &new_ctx->uc_sigmask, sizeof(set)))
 		do_exit(SIGSEGV);
-	restore_sigmask(&set);
+	set_current_blocked(&set);
 	if (restore_sigcontext(regs, NULL, 0, &new_ctx->uc_mcontext))
 		do_exit(SIGSEGV);
 
@@ -363,7 +364,7 @@ int sys_rt_sigreturn(unsigned long r3, unsigned long r4, unsigned long r5,
 
 	if (__copy_from_user(&set, &uc->uc_sigmask, sizeof(set)))
 		goto badframe;
-	restore_sigmask(&set);
+	set_current_blocked(&set);
 	if (restore_sigcontext(regs, NULL, 1, &uc->uc_mcontext))
 		goto badframe;
 
@@ -380,10 +381,10 @@ badframe:
 	printk("badframe in sys_rt_sigreturn, regs=%p uc=%p &uc->uc_mcontext=%p\n",
 	       regs, uc, &uc->uc_mcontext);
 #endif
-	if (show_unhandled_signals && printk_ratelimit())
-		printk(regs->msr & MSR_SF ? fmt64 : fmt32,
-			current->comm, current->pid, "rt_sigreturn",
-			(long)uc, regs->nip, regs->link);
+	if (show_unhandled_signals)
+		printk_ratelimited(regs->msr & MSR_64BIT ? fmt64 : fmt32,
+				   current->comm, current->pid, "rt_sigreturn",
+				   (long)uc, regs->nip, regs->link);
 
 	force_sig(SIGSEGV, current);
 	return 0;
@@ -468,10 +469,10 @@ badframe:
 	printk("badframe in setup_rt_frame, regs=%p frame=%p newsp=%lx\n",
 	       regs, frame, newsp);
 #endif
-	if (show_unhandled_signals && printk_ratelimit())
-		printk(regs->msr & MSR_SF ? fmt64 : fmt32,
-			current->comm, current->pid, "setup_rt_frame",
-			(long)frame, regs->nip, regs->link);
+	if (show_unhandled_signals)
+		printk_ratelimited(regs->msr & MSR_64BIT ? fmt64 : fmt32,
+				   current->comm, current->pid, "setup_rt_frame",
+				   (long)frame, regs->nip, regs->link);
 
 	force_sigsegv(signr, current);
 	return 0;

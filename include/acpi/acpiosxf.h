@@ -95,9 +95,20 @@ acpi_status
 acpi_os_table_override(struct acpi_table_header *existing_table,
 		       struct acpi_table_header **new_table);
 
+acpi_status
+acpi_os_physical_table_override(struct acpi_table_header *existing_table,
+				acpi_physical_address * new_address,
+				u32 *new_table_length);
+
 /*
  * Spinlock primitives
  */
+
+#ifndef acpi_os_create_lock
+acpi_status
+acpi_os_create_lock(acpi_spinlock *out_handle);
+#endif
+
 void acpi_os_delete_lock(acpi_spinlock handle);
 
 acpi_cpu_flags acpi_os_acquire_lock(acpi_spinlock handle);
@@ -183,6 +194,8 @@ void acpi_os_fixed_event_count(u32 fixed_event_number);
 /*
  * Threads and Scheduling
  */
+extern struct workqueue_struct *kacpi_hotplug_wq;
+
 acpi_thread_id acpi_os_get_thread_id(void);
 
 acpi_status
@@ -209,10 +222,10 @@ acpi_status acpi_os_write_port(acpi_io_address address, u32 value, u32 width);
  * Platform and hardware-independent physical memory interfaces
  */
 acpi_status
-acpi_os_read_memory(acpi_physical_address address, u32 * value, u32 width);
+acpi_os_read_memory(acpi_physical_address address, u64 *value, u32 width);
 
 acpi_status
-acpi_os_write_memory(acpi_physical_address address, u32 value, u32 width);
+acpi_os_write_memory(acpi_physical_address address, u64 value, u32 width);
 
 /*
  * Platform and hardware-independent PCI configuration space access
@@ -230,13 +243,6 @@ acpi_os_write_pci_configuration(struct acpi_pci_id *pci_id,
 /*
  * Miscellaneous
  */
-acpi_status
-acpi_os_validate_address(u8 space_id, acpi_physical_address address,
-			 acpi_size length, char *name);
-acpi_status
-acpi_os_invalidate_address(u8 space_id, acpi_physical_address address,
-			 acpi_size length);
-
 u64 acpi_os_get_timer(void);
 
 acpi_status acpi_os_signal(u32 function, void *info);

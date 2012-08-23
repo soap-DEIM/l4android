@@ -12,6 +12,7 @@
 #include <linux/seq_file.h>
 #include <linux/init.h>
 #include <linux/dma-mapping.h>
+#include <linux/export.h>
 
 #include <asm/setup.h>
 
@@ -28,21 +29,6 @@ struct rtc_time;
 struct file;
 struct pci_controller;
 struct kimage;
-
-#ifdef CONFIG_SMP
-struct smp_ops_t {
-	void  (*message_pass)(int target, int msg);
-	int   (*probe)(void);
-	void  (*kick_cpu)(int nr);
-	void  (*setup_cpu)(int nr);
-	void  (*bringup_done)(void);
-	void  (*take_timebase)(void);
-	void  (*give_timebase)(void);
-	int   (*cpu_disable)(void);
-	void  (*cpu_die)(unsigned int nr);
-	int   (*cpu_bootable)(unsigned int nr);
-};
-#endif
 
 struct machdep_calls {
 	char		*name;
@@ -100,8 +86,9 @@ struct machdep_calls {
 	void		(*pci_dma_dev_setup)(struct pci_dev *dev);
 	void		(*pci_dma_bus_setup)(struct pci_bus *bus);
 
-	/* Platform set_dma_mask override */
+	/* Platform set_dma_mask and dma_get_required_mask overrides */
 	int		(*dma_set_mask)(struct device *dev, u64 dma_mask);
+	u64		(*dma_get_required_mask)(struct device *dev);
 
 	int		(*probe)(void);
 	void		(*setup_arch)(void); /* Optional, may be NULL */
@@ -112,9 +99,7 @@ struct machdep_calls {
 
 	void		(*init_IRQ)(void);
 
-	/* Return an irq, or NO_IRQ to indicate there are none pending.
-	 * If for some reason there is no irq, but the interrupt
-	 * shouldn't be counted as spurious, return NO_IRQ_IGNORE. */
+	/* Return an irq, or NO_IRQ to indicate there are none pending. */
 	unsigned int	(*get_irq)(void);
 
 	/* PCI stuff */
@@ -226,6 +211,9 @@ struct machdep_calls {
 	 * allow assignment/enabling of the device. */
 	int  (*pcibios_enable_device_hook)(struct pci_dev *);
 
+	/* Called after scan and before resource survey */
+	void (*pcibios_fixup_phb)(struct pci_controller *hose);
+
 	/* Called to shutdown machine specific hardware not already controlled
 	 * by other drivers.
 	 */
@@ -267,6 +255,7 @@ struct machdep_calls {
 
 extern void e500_idle(void);
 extern void power4_idle(void);
+extern void power7_idle(void);
 extern void ppc6xx_idle(void);
 extern void book3e_idle(void);
 
@@ -310,12 +299,6 @@ typedef enum sys_ctrler_kind {
 extern sys_ctrler_t sys_ctrler;
 
 #endif /* CONFIG_PPC_PMAC */
-
-#ifdef CONFIG_SMP
-/* Poor default implementations */
-extern void __devinit smp_generic_give_timebase(void);
-extern void __devinit smp_generic_take_timebase(void);
-#endif /* CONFIG_SMP */
 
 
 /* Functions to produce codes on the leds.

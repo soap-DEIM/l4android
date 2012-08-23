@@ -29,7 +29,7 @@
 #include <asm/processor.h>
 #include <asm/mmu.h>
 #include <asm/mpspec.h>
-#include <asm/trampoline.h>
+#include <asm/realmode.h>
 
 #define COMPILER_DEPENDENT_INT64   long long
 #define COMPILER_DEPENDENT_UINT64  unsigned long long
@@ -117,11 +117,8 @@ static inline void acpi_disable_pci(void)
 /* Low-level suspend routine. */
 extern int acpi_suspend_lowlevel(void);
 
-extern const unsigned char acpi_wakeup_code[];
-#define acpi_wakeup_address (__pa(TRAMPOLINE_SYM(acpi_wakeup_code)))
-
-/* early initialization routine */
-extern void acpi_reserve_wakeup_memory(void);
+/* Physical address to resume after wakeup */
+#define acpi_wakeup_address ((unsigned long)(real_mode_header->wakeup_start))
 
 /*
  * Check if the CPU can handle C2 and deeper
@@ -139,7 +136,7 @@ static inline unsigned int acpi_processor_cstate_check(unsigned int max_cstate)
 	    boot_cpu_data.x86_model <= 0x05 &&
 	    boot_cpu_data.x86_mask < 0x0A)
 		return 1;
-	else if (c1e_detected)
+	else if (amd_e400_c1e_detected)
 		return 1;
 	else
 		return max_cstate;
@@ -182,8 +179,6 @@ static inline void disable_acpi(void) { }
 #endif /* !CONFIG_ACPI */
 
 #define ARCH_HAS_POWER_INIT	1
-
-struct bootnode;
 
 #ifdef CONFIG_ACPI_NUMA
 extern int acpi_numa;

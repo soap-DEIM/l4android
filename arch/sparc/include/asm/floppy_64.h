@@ -111,7 +111,7 @@ static unsigned char sun_82077_fd_inb(unsigned long port)
 	case 7: /* FD_DIR */
 		/* XXX: Is DCL on 0x80 in sun4m? */
 		return sbus_readb(&sun_fdc->dir_82077);
-	};
+	}
 	panic("sun_82072_fd_inb: How did I get here?");
 }
 
@@ -135,7 +135,7 @@ static void sun_82077_fd_outb(unsigned char value, unsigned long port)
 	case 4: /* FD_STATUS */
 		sbus_writeb(value, &sun_fdc->status_82077);
 		break;
-	};
+	}
 	return;
 }
 
@@ -161,10 +161,7 @@ unsigned long pdma_areasize;
 static void sun_fd_disable_dma(void)
 {
 	doing_pdma = 0;
-	if (pdma_base) {
-		mmu_unlockarea(pdma_base, pdma_areasize);
-		pdma_base = NULL;
-	}
+	pdma_base = NULL;
 }
 
 static void sun_fd_set_dma_mode(int mode)
@@ -194,7 +191,6 @@ static void sun_fd_set_dma_count(int length)
 
 static void sun_fd_enable_dma(void)
 {
-	pdma_vaddr = mmu_lockarea(pdma_vaddr, pdma_size);
 	pdma_base = pdma_vaddr;
 	pdma_areasize = pdma_size;
 }

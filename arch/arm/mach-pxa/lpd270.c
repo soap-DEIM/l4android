@@ -12,10 +12,10 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
-
+#include <linux/gpio.h>
 #include <linux/init.h>
 #include <linux/platform_device.h>
-#include <linux/sysdev.h>
+#include <linux/syscore_ops.h>
 #include <linux/interrupt.h>
 #include <linux/sched.h>
 #include <linux/bitops.h>
@@ -39,7 +39,6 @@
 #include <asm/mach/flash.h>
 
 #include <mach/pxa27x.h>
-#include <mach/gpio.h>
 #include <mach/lpd270.h>
 #include <mach/audio.h>
 #include <mach/pxafb.h>
@@ -153,36 +152,28 @@ static void __init lpd270_init_irq(void)
 					 handle_level_irq);
 		set_irq_flags(irq, IRQF_VALID | IRQF_PROBE);
 	}
-	irq_set_chained_handler(IRQ_GPIO(0), lpd270_irq_handler);
-	irq_set_irq_type(IRQ_GPIO(0), IRQ_TYPE_EDGE_FALLING);
+	irq_set_chained_handler(PXA_GPIO_TO_IRQ(0), lpd270_irq_handler);
+	irq_set_irq_type(PXA_GPIO_TO_IRQ(0), IRQ_TYPE_EDGE_FALLING);
 }
 
 
 #ifdef CONFIG_PM
-static int lpd270_irq_resume(struct sys_device *dev)
+static void lpd270_irq_resume(void)
 {
 	__raw_writew(lpd270_irq_enabled, LPD270_INT_MASK);
-	return 0;
 }
 
-static struct sysdev_class lpd270_irq_sysclass = {
-	.name = "cpld_irq",
+static struct syscore_ops lpd270_irq_syscore_ops = {
 	.resume = lpd270_irq_resume,
-};
-
-static struct sys_device lpd270_irq_device = {
-	.cls = &lpd270_irq_sysclass,
 };
 
 static int __init lpd270_irq_device_init(void)
 {
-	int ret = -ENODEV;
 	if (machine_is_logicpd_pxa270()) {
-		ret = sysdev_class_register(&lpd270_irq_sysclass);
-		if (ret == 0)
-			ret = sysdev_register(&lpd270_irq_device);
+		register_syscore_ops(&lpd270_irq_syscore_ops);
+		return 0;
 	}
-	return ret;
+	return -ENODEV;
 }
 
 device_initcall(lpd270_irq_device_init);
@@ -488,7 +479,7 @@ static void __init lpd270_init(void)
 
 static struct map_desc lpd270_io_desc[] __initdata = {
 	{
-		.virtual	= LPD270_CPLD_VIRT,
+		.virtual	= (unsigned long)LPD270_CPLD_VIRT,
 		.pfn		= __phys_to_pfn(LPD270_CPLD_PHYS),
 		.length		= LPD270_CPLD_SIZE,
 		.type		= MT_DEVICE,
@@ -507,10 +498,12 @@ static void __init lpd270_map_io(void)
 
 MACHINE_START(LOGICPD_PXA270, "LogicPD PXA270 Card Engine")
 	/* Maintainer: Peter Barada */
-	.boot_params	= 0xa0000100,
+	.atag_offset	= 0x100,
 	.map_io		= lpd270_map_io,
 	.nr_irqs	= LPD270_NR_IRQS,
 	.init_irq	= lpd270_init_irq,
+	.handle_irq	= pxa27x_handle_irq,
 	.timer		= &pxa_timer,
 	.init_machine	= lpd270_init,
+	.restart	= pxa_restart,
 MACHINE_END

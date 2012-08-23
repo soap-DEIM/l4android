@@ -52,6 +52,7 @@ SECTIONS
 
 	EXCEPTION_TABLE(4)
 
+	_sdata = .;
 	RODATA
 
 	. = ALIGN (4);
@@ -102,7 +103,7 @@ SECTIONS
 #endif
 	__vmlinux_end = .;		/* Last address of the physical file. */
 #ifdef CONFIG_ETRAX_ARCH_V32
-	PERCPU(32, PAGE_SIZE)
+	PERCPU_SECTION(32)
 
 	.init.ramfs : {
 		INIT_RAM_FS

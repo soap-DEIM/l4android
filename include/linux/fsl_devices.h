@@ -6,7 +6,7 @@
  *
  * Maintainer: Kumar Gala <galak@kernel.crashing.org>
  *
- * Copyright 2004 Freescale Semiconductor, Inc
+ * Copyright 2004,2012 Freescale Semiconductor, Inc
  *
  * This program is free software; you can redistribute  it and/or modify it
  * under  the terms of  the GNU General  Public License as published by the
@@ -16,6 +16,12 @@
 
 #ifndef _FSL_DEVICE_H_
 #define _FSL_DEVICE_H_
+
+#define FSL_UTMI_PHY_DLY	10	/*As per P1010RM, delay for UTMI
+				PHY CLK to become stable - 10ms*/
+#define FSL_USB_VER_OLD		0
+#define FSL_USB_VER_1_6		1
+#define FSL_USB_VER_2_2		2
 
 #include <linux/types.h>
 
@@ -63,6 +69,7 @@ struct platform_device;
 
 struct fsl_usb2_platform_data {
 	/* board specific information */
+	int				controller_ver;
 	enum fsl_usb2_operating_modes	operating_mode;
 	enum fsl_usb2_phy_modes		phy_mode;
 	unsigned int			port_enables;
@@ -72,6 +79,7 @@ struct fsl_usb2_platform_data {
 	void		(*exit)(struct platform_device *);
 	void __iomem	*regs;		/* ioremap'd register base */
 	struct clk	*clk;
+	unsigned	power_budget;	/* hcd->power_budget */
 	unsigned	big_endian_mmio:1;
 	unsigned	big_endian_desc:1;
 	unsigned	es:1;		/* need USBMODE:ES */
@@ -79,6 +87,21 @@ struct fsl_usb2_platform_data {
 	unsigned	have_sysif_regs:1;
 	unsigned	invert_drvvbus:1;
 	unsigned	invert_pwr_fault:1;
+
+	unsigned	suspended:1;
+	unsigned	already_suspended:1;
+
+	/* register save area for suspend/resume */
+	u32		pm_command;
+	u32		pm_status;
+	u32		pm_intr_enable;
+	u32		pm_frame_index;
+	u32		pm_segment;
+	u32		pm_frame_list;
+	u32		pm_async_next;
+	u32		pm_configured_flag;
+	u32		pm_portsc;
+	u32		pm_usbgenctrl;
 };
 
 /* Flags in fsl_usb2_mph_platform_data */

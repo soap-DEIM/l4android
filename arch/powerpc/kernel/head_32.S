@@ -139,8 +139,7 @@ __start:
 	trap
 #endif /* CONFIG_PPC_PMAC */
 
-1:	mr	r31,r3			/* save parameters */
-	mr	r30,r4
+1:	mr	r31,r3			/* save device tree ptr */
 	li	r24,0			/* cpu # */
 
 /*
@@ -396,7 +395,7 @@ DataAccess:
 	bl	hash_page
 1:	lwz	r5,_DSISR(r11)		/* get DSISR value */
 	mfspr	r4,SPRN_DAR
-	EXC_XFER_EE_LITE(0x300, handle_page_fault)
+	EXC_XFER_LITE(0x300, handle_page_fault)
 
 
 /* Instruction access exception. */
@@ -411,7 +410,7 @@ InstructionAccess:
 	bl	hash_page
 1:	mr	r4,r12
 	mr	r5,r9
-	EXC_XFER_EE_LITE(0x400, handle_page_fault)
+	EXC_XFER_LITE(0x400, handle_page_fault)
 
 /* External interrupt */
 	EXCEPTION(0x500, HardwareInterrupt, do_IRQ, EXC_XFER_LITE)
@@ -805,19 +804,6 @@ _ENTRY(copy_and_flush)
 	blr
 
 #ifdef CONFIG_SMP
-#ifdef CONFIG_GEMINI
-	.globl	__secondary_start_gemini
-__secondary_start_gemini:
-        mfspr   r4,SPRN_HID0
-        ori     r4,r4,HID0_ICFI
-        li      r3,0
-        ori     r3,r3,HID0_ICE
-        andc    r4,r4,r3
-        mtspr   SPRN_HID0,r4
-        sync
-        b       __secondary_start
-#endif /* CONFIG_GEMINI */
-
 	.globl __secondary_start_mpc86xx
 __secondary_start_mpc86xx:
 	mfspr	r3, SPRN_PIR
@@ -890,15 +876,6 @@ __secondary_start:
 	mtspr	SPRN_SRR1,r4
 	SYNC
 	RFI
-
-_GLOBAL(start_secondary_resume)
-	/* Reset stack */
-	rlwinm	r1,r1,0,0,(31-THREAD_SHIFT)	/* current_thread_info() */
-	addi	r1,r1,THREAD_SIZE-STACK_FRAME_OVERHEAD
-	li	r3,0
-	std	r3,0(r1)		/* Zero the stack frame pointer	*/
-	bl	start_secondary
-	b	.
 #endif /* CONFIG_SMP */
 
 #ifdef CONFIG_KVM_BOOK3S_HANDLER
@@ -986,8 +963,8 @@ start_here:
  * Do early platform-specific initialization,
  * and set up the MMU.
  */
-	mr	r3,r31
-	mr	r4,r30
+	li	r3,0
+	mr	r4,r31
 	bl	machine_init
 	bl	__save_cpu_setup
 	bl	MMU_init

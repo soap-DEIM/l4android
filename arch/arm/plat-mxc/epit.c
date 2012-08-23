@@ -50,6 +50,7 @@
 #include <linux/irq.h>
 #include <linux/clockchips.h>
 #include <linux/clk.h>
+#include <linux/err.h>
 
 #include <mach/hardware.h>
 #include <asm/mach/time.h>
@@ -83,26 +84,12 @@ static void epit_irq_acknowledge(void)
 	__raw_writel(EPITSR_OCIF, timer_base + EPITSR);
 }
 
-static cycle_t epit_read(struct clocksource *cs)
-{
-	return 0 - __raw_readl(timer_base + EPITCNR);
-}
-
-static struct clocksource clocksource_epit = {
-	.name		= "epit",
-	.rating		= 200,
-	.read		= epit_read,
-	.mask		= CLOCKSOURCE_MASK(32),
-	.flags		= CLOCK_SOURCE_IS_CONTINUOUS,
-};
-
 static int __init epit_clocksource_init(struct clk *timer_clk)
 {
 	unsigned int c = clk_get_rate(timer_clk);
 
-	clocksource_register_hz(&clocksource_epit, c);
-
-	return 0;
+	return clocksource_mmio_init(timer_base + EPITCNR, "epit", c, 200, 32,
+			clocksource_mmio_readl_down);
 }
 
 /* clock event */
@@ -215,9 +202,17 @@ static int __init epit_clockevent_init(struct clk *timer_clk)
 	return 0;
 }
 
-void __init epit_timer_init(struct clk *timer_clk, void __iomem *base, int irq)
+void __init epit_timer_init(void __iomem *base, int irq)
 {
-	clk_enable(timer_clk);
+	struct clk *timer_clk;
+
+	timer_clk = clk_get_sys("imx-epit.0", NULL);
+	if (IS_ERR(timer_clk)) {
+		pr_err("i.MX epit: unable to get clk\n");
+		return;
+	}
+
+	clk_prepare_enable(timer_clk);
 
 	timer_base = base;
 

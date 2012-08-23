@@ -50,9 +50,8 @@
 
 static intctl_cpm2_t __iomem *cpm2_intctl;
 
-static struct irq_host *cpm2_pic_host;
-#define NR_MASK_WORDS   ((NR_IRQS + 31) / 32)
-static unsigned long ppc_cached_irq_mask[NR_MASK_WORDS];
+static struct irq_domain *cpm2_pic_host;
+static unsigned long ppc_cached_irq_mask[2]; /* 2 32-bit registers */
 
 static const u_char irq_to_siureg[] = {
 	1, 1, 1, 1, 1, 1, 1, 1,
@@ -81,7 +80,7 @@ static const u_char irq_to_siubit[] = {
 static void cpm2_mask_irq(struct irq_data *d)
 {
 	int	bit, word;
-	unsigned int irq_nr = virq_to_hw(d->irq);
+	unsigned int irq_nr = irqd_to_hwirq(d);
 
 	bit = irq_to_siubit[irq_nr];
 	word = irq_to_siureg[irq_nr];
@@ -93,7 +92,7 @@ static void cpm2_mask_irq(struct irq_data *d)
 static void cpm2_unmask_irq(struct irq_data *d)
 {
 	int	bit, word;
-	unsigned int irq_nr = virq_to_hw(d->irq);
+	unsigned int irq_nr = irqd_to_hwirq(d);
 
 	bit = irq_to_siubit[irq_nr];
 	word = irq_to_siureg[irq_nr];
@@ -105,7 +104,7 @@ static void cpm2_unmask_irq(struct irq_data *d)
 static void cpm2_ack(struct irq_data *d)
 {
 	int	bit, word;
-	unsigned int irq_nr = virq_to_hw(d->irq);
+	unsigned int irq_nr = irqd_to_hwirq(d);
 
 	bit = irq_to_siubit[irq_nr];
 	word = irq_to_siureg[irq_nr];
@@ -116,7 +115,7 @@ static void cpm2_ack(struct irq_data *d)
 static void cpm2_end_irq(struct irq_data *d)
 {
 	int	bit, word;
-	unsigned int irq_nr = virq_to_hw(d->irq);
+	unsigned int irq_nr = irqd_to_hwirq(d);
 
 	bit = irq_to_siubit[irq_nr];
 	word = irq_to_siureg[irq_nr];
@@ -133,7 +132,7 @@ static void cpm2_end_irq(struct irq_data *d)
 
 static int cpm2_set_irq_type(struct irq_data *d, unsigned int flow_type)
 {
-	unsigned int src = virq_to_hw(d->irq);
+	unsigned int src = irqd_to_hwirq(d);
 	unsigned int vold, vnew, edibit;
 
 	/* Port C interrupts are either IRQ_TYPE_EDGE_FALLING or
@@ -214,7 +213,7 @@ unsigned int cpm2_get_irq(void)
 	return irq_linear_revmap(cpm2_pic_host, irq);
 }
 
-static int cpm2_pic_host_map(struct irq_host *h, unsigned int virq,
+static int cpm2_pic_host_map(struct irq_domain *h, unsigned int virq,
 			  irq_hw_number_t hw)
 {
 	pr_debug("cpm2_pic_host_map(%d, 0x%lx)\n", virq, hw);
@@ -224,21 +223,9 @@ static int cpm2_pic_host_map(struct irq_host *h, unsigned int virq,
 	return 0;
 }
 
-static int cpm2_pic_host_xlate(struct irq_host *h, struct device_node *ct,
-			    const u32 *intspec, unsigned int intsize,
-			    irq_hw_number_t *out_hwirq, unsigned int *out_flags)
-{
-	*out_hwirq = intspec[0];
-	if (intsize > 1)
-		*out_flags = intspec[1];
-	else
-		*out_flags = IRQ_TYPE_NONE;
-	return 0;
-}
-
-static struct irq_host_ops cpm2_pic_host_ops = {
+static const struct irq_domain_ops cpm2_pic_host_ops = {
 	.map = cpm2_pic_host_map,
-	.xlate = cpm2_pic_host_xlate,
+	.xlate = irq_domain_xlate_onetwocell,
 };
 
 void cpm2_pic_init(struct device_node *node)
@@ -275,8 +262,7 @@ void cpm2_pic_init(struct device_node *node)
 	out_be32(&cpm2_intctl->ic_scprrl, 0x05309770);
 
 	/* create a legacy host */
-	cpm2_pic_host = irq_alloc_host(node, IRQ_HOST_MAP_LINEAR,
-				       64, &cpm2_pic_host_ops, 64);
+	cpm2_pic_host = irq_domain_add_linear(node, 64, &cpm2_pic_host_ops, NULL);
 	if (cpm2_pic_host == NULL) {
 		printk(KERN_ERR "CPM2 PIC: failed to allocate irq host!\n");
 		return;

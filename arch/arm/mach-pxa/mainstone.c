@@ -12,10 +12,10 @@
  *  it under the terms of the GNU General Public License version 2 as
  *  published by the Free Software Foundation.
  */
-
+#include <linux/gpio.h>
 #include <linux/init.h>
 #include <linux/platform_device.h>
-#include <linux/sysdev.h>
+#include <linux/syscore_ops.h>
 #include <linux/interrupt.h>
 #include <linux/sched.h>
 #include <linux/bitops.h>
@@ -43,7 +43,6 @@
 #include <asm/mach/flash.h>
 
 #include <mach/pxa27x.h>
-#include <mach/gpio.h>
 #include <mach/mainstone.h>
 #include <mach/audio.h>
 #include <mach/pxafb.h>
@@ -179,37 +178,27 @@ static void __init mainstone_init_irq(void)
 	MST_INTMSKENA = 0;
 	MST_INTSETCLR = 0;
 
-	irq_set_chained_handler(IRQ_GPIO(0), mainstone_irq_handler);
-	irq_set_irq_type(IRQ_GPIO(0), IRQ_TYPE_EDGE_FALLING);
+	irq_set_chained_handler(PXA_GPIO_TO_IRQ(0), mainstone_irq_handler);
+	irq_set_irq_type(PXA_GPIO_TO_IRQ(0), IRQ_TYPE_EDGE_FALLING);
 }
 
 #ifdef CONFIG_PM
 
-static int mainstone_irq_resume(struct sys_device *dev)
+static void mainstone_irq_resume(void)
 {
 	MST_INTMSKENA = mainstone_irq_enabled;
-	return 0;
 }
 
-static struct sysdev_class mainstone_irq_sysclass = {
-	.name = "cpld_irq",
+static struct syscore_ops mainstone_irq_syscore_ops = {
 	.resume = mainstone_irq_resume,
-};
-
-static struct sys_device mainstone_irq_device = {
-	.cls = &mainstone_irq_sysclass,
 };
 
 static int __init mainstone_irq_device_init(void)
 {
-	int ret = -ENODEV;
+	if (machine_is_mainstone())
+		register_syscore_ops(&mainstone_irq_syscore_ops);
 
-	if (machine_is_mainstone()) {
-		ret = sysdev_class_register(&mainstone_irq_sysclass);
-		if (ret == 0)
-			ret = sysdev_register(&mainstone_irq_device);
-	}
-	return ret;
+	return 0;
 }
 
 device_initcall(mainstone_irq_device_init);
@@ -626,10 +615,12 @@ static void __init mainstone_map_io(void)
 
 MACHINE_START(MAINSTONE, "Intel HCDDBBVA0 Development Platform (aka Mainstone)")
 	/* Maintainer: MontaVista Software Inc. */
-	.boot_params	= 0xa0000100,	/* BLOB boot parameter setting */
+	.atag_offset	= 0x100,	/* BLOB boot parameter setting */
 	.map_io		= mainstone_map_io,
 	.nr_irqs	= MAINSTONE_NR_IRQS,
 	.init_irq	= mainstone_init_irq,
+	.handle_irq	= pxa27x_handle_irq,
 	.timer		= &pxa_timer,
 	.init_machine	= mainstone_init,
+	.restart	= pxa_restart,
 MACHINE_END

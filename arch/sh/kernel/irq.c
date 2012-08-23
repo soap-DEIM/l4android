@@ -13,6 +13,7 @@
 #include <linux/seq_file.h>
 #include <linux/ftrace.h>
 #include <linux/delay.h>
+#include <linux/ratelimit.h>
 #include <asm/processor.h>
 #include <asm/machvec.h>
 #include <asm/uaccess.h>
@@ -233,8 +234,10 @@ void __init init_IRQ(void)
 #ifdef CONFIG_SPARSE_IRQ
 int __init arch_probe_nr_irqs(void)
 {
-	nr_irqs = sh_mv.mv_nr_irqs;
-	return NR_IRQS_LEGACY;
+	/*
+	 * No pre-allocated IRQs.
+	 */
+	return 0;
 }
 #endif
 
@@ -268,9 +271,8 @@ void migrate_irqs(void)
 			unsigned int newcpu = cpumask_any_and(data->affinity,
 							      cpu_online_mask);
 			if (newcpu >= nr_cpu_ids) {
-				if (printk_ratelimit())
-					printk(KERN_INFO "IRQ%u no longer affine to CPU%u\n",
-					       irq, cpu);
+				pr_info_ratelimited("IRQ%u no longer affine to CPU%u\n",
+						    irq, cpu);
 
 				cpumask_setall(data->affinity);
 				newcpu = cpumask_any_and(data->affinity,

@@ -35,23 +35,8 @@ struct drm_fb_helper;
 #include <linux/kgdb.h>
 
 struct drm_fb_helper_crtc {
-	uint32_t crtc_id;
 	struct drm_mode_set mode_set;
 	struct drm_display_mode *desired_mode;
-};
-
-/* mode specified on the command line */
-struct drm_fb_helper_cmdline_mode {
-	bool specified;
-	bool refresh_specified;
-	bool bpp_specified;
-	int xres, yres;
-	int bpp;
-	int refresh;
-	bool rb;
-	bool interlace;
-	bool cvt;
-	bool margins;
 };
 
 struct drm_fb_helper_surface_size {
@@ -74,8 +59,8 @@ struct drm_fb_helper_funcs {
 };
 
 struct drm_fb_helper_connector {
-	struct drm_fb_helper_cmdline_mode cmdline_mode;
 	struct drm_connector *connector;
+	struct drm_cmdline_mode cmdline_mode;
 };
 
 struct drm_fb_helper {
@@ -88,7 +73,6 @@ struct drm_fb_helper {
 	int connector_count;
 	struct drm_fb_helper_connector **connector_info;
 	struct drm_fb_helper_funcs *funcs;
-	int conn_limit;
 	struct fb_info *fbdev;
 	u32 pseudo_palette[17];
 	struct list_head kernel_fb_list;

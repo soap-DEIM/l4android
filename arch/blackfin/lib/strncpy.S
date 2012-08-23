@@ -1,7 +1,7 @@
 /*
  * Copyright 2005-2010 Analog Devices Inc.
  *
- * Licensed under the ADI BSD license or the GPL-2 (or later)
+ * Licensed under the Clear BSD license or the GPL-2 (or later)
  */
 
 #include <linux/linkage.h>
@@ -25,7 +25,7 @@
 
 ENTRY(_strncpy)
 	CC = R2 == 0;
-	if CC JUMP 4f;
+	if CC JUMP 6f;
 
 	P2 = R2 ;       /* size */
 	P0 = R0 ;       /* dst*/

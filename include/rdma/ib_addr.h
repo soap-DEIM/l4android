@@ -217,18 +217,23 @@ static inline enum ib_mtu iboe_get_mtu(int mtu)
 static inline int iboe_get_rate(struct net_device *dev)
 {
 	struct ethtool_cmd cmd;
+	u32 speed;
+	int err;
 
-	if (!dev->ethtool_ops || !dev->ethtool_ops->get_settings ||
-	    dev->ethtool_ops->get_settings(dev, &cmd))
+	rtnl_lock();
+	err = __ethtool_get_settings(dev, &cmd);
+	rtnl_unlock();
+	if (err)
 		return IB_RATE_PORT_CURRENT;
 
-	if (cmd.speed >= 40000)
+	speed = ethtool_cmd_speed(&cmd);
+	if (speed >= 40000)
 		return IB_RATE_40_GBPS;
-	else if (cmd.speed >= 30000)
+	else if (speed >= 30000)
 		return IB_RATE_30_GBPS;
-	else if (cmd.speed >= 20000)
+	else if (speed >= 20000)
 		return IB_RATE_20_GBPS;
-	else if (cmd.speed >= 10000)
+	else if (speed >= 10000)
 		return IB_RATE_10_GBPS;
 	else
 		return IB_RATE_PORT_CURRENT;
@@ -276,7 +281,7 @@ static inline u16 rdma_get_vlan_id(union ib_gid *dgid)
 static inline struct net_device *rdma_vlan_dev_real_dev(const struct net_device *dev)
 {
 	return dev->priv_flags & IFF_802_1Q_VLAN ?
-		vlan_dev_real_dev(dev) : 0;
+		vlan_dev_real_dev(dev) : NULL;
 }
 
 #endif /* IB_ADDR_H */

@@ -132,7 +132,7 @@ static struct of_device_id mpc52xx_sdma_ids[] __initdata = {
 
 static struct mpc52xx_intr __iomem *intr;
 static struct mpc52xx_sdma __iomem *sdma;
-static struct irq_host *mpc52xx_irqhost = NULL;
+static struct irq_domain *mpc52xx_irqhost = NULL;
 
 static unsigned char mpc52xx_map_senses[4] = {
 	IRQ_TYPE_LEVEL_HIGH,
@@ -157,48 +157,30 @@ static inline void io_be_clrbit(u32 __iomem *addr, int bitno)
  */
 static void mpc52xx_extirq_mask(struct irq_data *d)
 {
-	int irq;
-	int l2irq;
-
-	irq = irq_map[d->irq].hwirq;
-	l2irq = irq & MPC52xx_IRQ_L2_MASK;
-
+	int l2irq = irqd_to_hwirq(d) & MPC52xx_IRQ_L2_MASK;
 	io_be_clrbit(&intr->ctrl, 11 - l2irq);
 }
 
 static void mpc52xx_extirq_unmask(struct irq_data *d)
 {
-	int irq;
-	int l2irq;
-
-	irq = irq_map[d->irq].hwirq;
-	l2irq = irq & MPC52xx_IRQ_L2_MASK;
-
+	int l2irq = irqd_to_hwirq(d) & MPC52xx_IRQ_L2_MASK;
 	io_be_setbit(&intr->ctrl, 11 - l2irq);
 }
 
 static void mpc52xx_extirq_ack(struct irq_data *d)
 {
-	int irq;
-	int l2irq;
-
-	irq = irq_map[d->irq].hwirq;
-	l2irq = irq & MPC52xx_IRQ_L2_MASK;
-
+	int l2irq = irqd_to_hwirq(d) & MPC52xx_IRQ_L2_MASK;
 	io_be_setbit(&intr->ctrl, 27-l2irq);
 }
 
 static int mpc52xx_extirq_set_type(struct irq_data *d, unsigned int flow_type)
 {
 	u32 ctrl_reg, type;
-	int irq;
-	int l2irq;
+	int l2irq = irqd_to_hwirq(d) & MPC52xx_IRQ_L2_MASK;
 	void *handler = handle_level_irq;
 
-	irq = irq_map[d->irq].hwirq;
-	l2irq = irq & MPC52xx_IRQ_L2_MASK;
-
-	pr_debug("%s: irq=%x. l2=%d flow_type=%d\n", __func__, irq, l2irq, flow_type);
+	pr_debug("%s: irq=%x. l2=%d flow_type=%d\n", __func__,
+		(int) irqd_to_hwirq(d), l2irq, flow_type);
 
 	switch (flow_type) {
 	case IRQF_TRIGGER_HIGH: type = 0; break;
@@ -237,23 +219,13 @@ static int mpc52xx_null_set_type(struct irq_data *d, unsigned int flow_type)
 
 static void mpc52xx_main_mask(struct irq_data *d)
 {
-	int irq;
-	int l2irq;
-
-	irq = irq_map[d->irq].hwirq;
-	l2irq = irq & MPC52xx_IRQ_L2_MASK;
-
+	int l2irq = irqd_to_hwirq(d) & MPC52xx_IRQ_L2_MASK;
 	io_be_setbit(&intr->main_mask, 16 - l2irq);
 }
 
 static void mpc52xx_main_unmask(struct irq_data *d)
 {
-	int irq;
-	int l2irq;
-
-	irq = irq_map[d->irq].hwirq;
-	l2irq = irq & MPC52xx_IRQ_L2_MASK;
-
+	int l2irq = irqd_to_hwirq(d) & MPC52xx_IRQ_L2_MASK;
 	io_be_clrbit(&intr->main_mask, 16 - l2irq);
 }
 
@@ -270,23 +242,13 @@ static struct irq_chip mpc52xx_main_irqchip = {
  */
 static void mpc52xx_periph_mask(struct irq_data *d)
 {
-	int irq;
-	int l2irq;
-
-	irq = irq_map[d->irq].hwirq;
-	l2irq = irq & MPC52xx_IRQ_L2_MASK;
-
+	int l2irq = irqd_to_hwirq(d) & MPC52xx_IRQ_L2_MASK;
 	io_be_setbit(&intr->per_mask, 31 - l2irq);
 }
 
 static void mpc52xx_periph_unmask(struct irq_data *d)
 {
-	int irq;
-	int l2irq;
-
-	irq = irq_map[d->irq].hwirq;
-	l2irq = irq & MPC52xx_IRQ_L2_MASK;
-
+	int l2irq = irqd_to_hwirq(d) & MPC52xx_IRQ_L2_MASK;
 	io_be_clrbit(&intr->per_mask, 31 - l2irq);
 }
 
@@ -303,34 +265,19 @@ static struct irq_chip mpc52xx_periph_irqchip = {
  */
 static void mpc52xx_sdma_mask(struct irq_data *d)
 {
-	int irq;
-	int l2irq;
-
-	irq = irq_map[d->irq].hwirq;
-	l2irq = irq & MPC52xx_IRQ_L2_MASK;
-
+	int l2irq = irqd_to_hwirq(d) & MPC52xx_IRQ_L2_MASK;
 	io_be_setbit(&sdma->IntMask, l2irq);
 }
 
 static void mpc52xx_sdma_unmask(struct irq_data *d)
 {
-	int irq;
-	int l2irq;
-
-	irq = irq_map[d->irq].hwirq;
-	l2irq = irq & MPC52xx_IRQ_L2_MASK;
-
+	int l2irq = irqd_to_hwirq(d) & MPC52xx_IRQ_L2_MASK;
 	io_be_clrbit(&sdma->IntMask, l2irq);
 }
 
 static void mpc52xx_sdma_ack(struct irq_data *d)
 {
-	int irq;
-	int l2irq;
-
-	irq = irq_map[d->irq].hwirq;
-	l2irq = irq & MPC52xx_IRQ_L2_MASK;
-
+	int l2irq = irqd_to_hwirq(d) & MPC52xx_IRQ_L2_MASK;
 	out_be32(&sdma->IntPend, 1 << l2irq);
 }
 
@@ -354,7 +301,7 @@ static int mpc52xx_is_extirq(int l1, int l2)
 /**
  * mpc52xx_irqhost_xlate - translate virq# from device tree interrupts property
  */
-static int mpc52xx_irqhost_xlate(struct irq_host *h, struct device_node *ct,
+static int mpc52xx_irqhost_xlate(struct irq_domain *h, struct device_node *ct,
 				 const u32 *intspec, unsigned int intsize,
 				 irq_hw_number_t *out_hwirq,
 				 unsigned int *out_flags)
@@ -388,7 +335,7 @@ static int mpc52xx_irqhost_xlate(struct irq_host *h, struct device_node *ct,
 /**
  * mpc52xx_irqhost_map - Hook to map from virq to an irq_chip structure
  */
-static int mpc52xx_irqhost_map(struct irq_host *h, unsigned int virq,
+static int mpc52xx_irqhost_map(struct irq_domain *h, unsigned int virq,
 			       irq_hw_number_t irq)
 {
 	int l1irq;
@@ -437,7 +384,7 @@ static int mpc52xx_irqhost_map(struct irq_host *h, unsigned int virq,
 	return 0;
 }
 
-static struct irq_host_ops mpc52xx_irqhost_ops = {
+static const struct irq_domain_ops mpc52xx_irqhost_ops = {
 	.xlate = mpc52xx_irqhost_xlate,
 	.map = mpc52xx_irqhost_map,
 };
@@ -497,9 +444,9 @@ void __init mpc52xx_init_irq(void)
 	 * As last step, add an irq host to translate the real
 	 * hw irq information provided by the ofw to linux virq
 	 */
-	mpc52xx_irqhost = irq_alloc_host(picnode, IRQ_HOST_MAP_LINEAR,
+	mpc52xx_irqhost = irq_domain_add_linear(picnode,
 	                                 MPC52xx_IRQ_HIGHTESTHWIRQ,
-	                                 &mpc52xx_irqhost_ops, -1);
+	                                 &mpc52xx_irqhost_ops, NULL);
 
 	if (!mpc52xx_irqhost)
 		panic(__FILE__ ": Cannot allocate the IRQ host\n");
@@ -539,7 +486,7 @@ void __init mpc52xx_init_irq(void)
 unsigned int mpc52xx_get_irq(void)
 {
 	u32 status;
-	int irq = NO_IRQ_IGNORE;
+	int irq;
 
 	status = in_be32(&intr->enc_status);
 	if (status & 0x00000400) {	/* critical */
@@ -562,6 +509,8 @@ unsigned int mpc52xx_get_irq(void)
 		} else {
 			irq |= (MPC52xx_IRQ_L1_PERP << MPC52xx_IRQ_L1_OFFSET);
 		}
+	} else {
+		return NO_IRQ;
 	}
 
 	return irq_linear_revmap(mpc52xx_irqhost, irq);

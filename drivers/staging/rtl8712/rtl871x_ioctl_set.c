@@ -68,7 +68,10 @@ static u8 do_join(struct _adapter *padapter)
 	pmlmepriv->fw_state |= _FW_UNDER_LINKING;
 	pmlmepriv->pscanned = plist;
 	pmlmepriv->to_join = true;
-	if (_queue_empty(queue) == true) {
+
+	/* adhoc mode will start with an empty queue, but skip checking */
+	if (!check_fwstate(pmlmepriv, WIFI_ADHOC_STATE) &&
+	    _queue_empty(queue)) {
 		if (pmlmepriv->fw_state & _FW_UNDER_LINKING)
 			pmlmepriv->fw_state ^= _FW_UNDER_LINKING;
 		/* when set_ssid/set_bssid for do_join(), but scanning queue
@@ -240,7 +243,7 @@ done:
 	spin_unlock_irqrestore(&pmlmepriv->lock, irqL);
 }
 
-u8 r8712_set_802_11_infrastructure_mode(struct _adapter *padapter,
+void r8712_set_802_11_infrastructure_mode(struct _adapter *padapter,
 	enum NDIS_802_11_NETWORK_INFRASTRUCTURE networktype)
 {
 	unsigned long irqL;
@@ -261,7 +264,7 @@ u8 r8712_set_802_11_infrastructure_mode(struct _adapter *padapter,
 		    (*pold_state == Ndis802_11Infrastructure) ||
 		    (*pold_state == Ndis802_11IBSS)) {
 			/* will clr Linked_state before this function,
-			 * we must have chked whether issue dis-assoc_cmd or
+			 * we must have checked whether issue dis-assoc_cmd or
 			 * not */
 			r8712_ind_disconnect(padapter);
 		}
@@ -287,7 +290,6 @@ u8 r8712_set_802_11_infrastructure_mode(struct _adapter *padapter,
 		}
 		spin_unlock_irqrestore(&pmlmepriv->lock, irqL);
 	}
-	return true;
 }
 
 u8 r8712_set_802_11_disassociate(struct _adapter *padapter)

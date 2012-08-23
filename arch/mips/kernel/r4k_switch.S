@@ -4,7 +4,7 @@
  * for more details.
  *
  * Copyright (C) 1994, 1995, 1996, 1998, 1999, 2002, 2003 Ralf Baechle
- * Copyright (C) 1996 David S. Miller (dm@engr.sgi.com)
+ * Copyright (C) 1996 David S. Miller (davem@davemloft.net)
  * Copyright (C) 1994, 1995, 1996, by Andreas Busse
  * Copyright (C) 1999 Silicon Graphics, Inc.
  * Copyright (C) 2000 MIPS Technologies, Inc.
@@ -41,7 +41,7 @@
 
 /*
  * task_struct *resume(task_struct *prev, task_struct *next,
- *                     struct thread_info *next_ti)
+ *                     struct thread_info *next_ti, int usedfpu)
  */
 	.align	5
 	LEAF(resume)
@@ -53,16 +53,10 @@
 	/*
 	 * check if we need to save FPU registers
 	 */
+
+	beqz    a3, 1f
+
 	PTR_L	t3, TASK_THREAD_INFO(a0)
-	LONG_L	t0, TI_FLAGS(t3)
-	li	t1, _TIF_USEDFPU
-	and	t2, t0, t1
-	beqz	t2, 1f
-	nor	t1, zero, t1
-
-	and	t0, t0, t1
-	LONG_S	t0, TI_FLAGS(t3)
-
 	/*
 	 * clear saved user stack CU1 bit
 	 */

@@ -3,7 +3,7 @@
  *
  * Copyright 2005-2008 Analog Devices Inc.
  *
- * Licensed under the ADI BSD license or GPL-2 (or later).
+ * Licensed under the Clear BSD license or GPL-2 (or later).
  */
 
 #ifndef _DEF_LPBLACKFIN_H
@@ -52,10 +52,10 @@
 
 #define bfin_read(addr) \
 ({ \
-    sizeof(*(addr)) == 1 ? bfin_read8(addr)  : \
-    sizeof(*(addr)) == 2 ? bfin_read16(addr) : \
-    sizeof(*(addr)) == 4 ? bfin_read32(addr) : \
-    ({ BUG(); 0; }); \
+	sizeof(*(addr)) == 1 ? bfin_read8(addr)  : \
+	sizeof(*(addr)) == 2 ? bfin_read16(addr) : \
+	sizeof(*(addr)) == 4 ? bfin_read32(addr) : \
+	({ BUG(); 0; }); \
 })
 #define bfin_write(addr, val) \
 do { \
@@ -69,13 +69,13 @@ do { \
 
 #define bfin_write_or(addr, bits) \
 do { \
-	void *__addr = (void *)(addr); \
+	typeof(addr) __addr = (addr); \
 	bfin_write(__addr, bfin_read(__addr) | (bits)); \
 } while (0)
 
 #define bfin_write_and(addr, bits) \
 do { \
-	void *__addr = (void *)(addr); \
+	typeof(addr) __addr = (addr); \
 	bfin_write(__addr, bfin_read(__addr) & (bits)); \
 } while (0)
 
@@ -622,6 +622,10 @@ do { \
 #define PAGE_SIZE_4KB      0x00010000	/* 4 KB page size */
 #define PAGE_SIZE_1MB      0x00020000	/* 1 MB page size */
 #define PAGE_SIZE_4MB      0x00030000	/* 4 MB page size */
+#define PAGE_SIZE_16KB     0x00040000	/* 16 KB page size */
+#define PAGE_SIZE_64KB     0x00050000	/* 64 KB page size */
+#define PAGE_SIZE_16MB     0x00060000	/* 16 MB page size */
+#define PAGE_SIZE_64MB     0x00070000	/* 64 MB page size */
 #define CPLB_L1SRAM        0x00000020	/* 0=SRAM mapped in L1, 0=SRAM not
 					 * mapped to L1
 					 */

@@ -4,30 +4,23 @@
 
 if ARCH_SPEAR3XX
 
-choice
-	prompt "SPEAr3XX Family"
-	default MACH_SPEAR300
-
+menu "SPEAr3xx Implementations"
 config MACH_SPEAR300
-	bool "SPEAr300"
+	bool "SPEAr300 Machine support with Device Tree"
+	select PINCTRL_SPEAR300
 	help
-	  Supports ST SPEAr300 Machine
+	  Supports ST SPEAr300 machine configured via the device-tree
 
 config MACH_SPEAR310
-	bool "SPEAr310"
+	bool "SPEAr310 Machine support with Device Tree"
+	select PINCTRL_SPEAR310
 	help
-	  Supports ST SPEAr310 Machine
+	  Supports ST SPEAr310 machine configured via the device-tree
 
 config MACH_SPEAR320
-	bool "SPEAr320"
+	bool "SPEAr320 Machine support with Device Tree"
+	select PINCTRL_SPEAR320
 	help
-	  Supports ST SPEAr320 Machine
-
-endchoice
-
-# Adding SPEAr3XX machine specific configuration files
-source "arch/arm/mach-spear3xx/Kconfig300"
-source "arch/arm/mach-spear3xx/Kconfig310"
-source "arch/arm/mach-spear3xx/Kconfig320"
-
+	  Supports ST SPEAr320 machine configured via the device-tree
+endmenu
 endif #ARCH_SPEAR3XX

@@ -29,15 +29,12 @@
 #include <linux/gfp.h>
 
 #include <asm/processor.h>
-#include <asm/system.h>
 #include <asm/uaccess.h>
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
 #include <asm/dma.h>
 #include <asm/tlb.h>
 #include <asm/sections.h>
-
-DEFINE_PER_CPU(struct mmu_gather, mmu_gathers);
 
 unsigned long highstart_pfn, highend_pfn;
 

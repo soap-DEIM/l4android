@@ -16,13 +16,13 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/clockchips.h>
-#include <linux/sched.h>
 
 #include <asm/div64.h>
 #include <asm/mach/irq.h>
 #include <asm/mach/time.h>
 #include <asm/sched_clock.h>
 #include <mach/regs-ost.h>
+#include <mach/irqs.h>
 
 /*
  * This is PXA's sched_clock implementation. This has a resolution
@@ -32,18 +32,10 @@
  * long as there is always less than 582 seconds between successive
  * calls to sched_clock() which should always be the case in practice.
  */
-static DEFINE_CLOCK_DATA(cd);
 
-unsigned long long notrace sched_clock(void)
+static u32 notrace pxa_read_sched_clock(void)
 {
-	u32 cyc = OSCR;
-	return cyc_to_sched_clock(&cd, cyc, (u32)~0);
-}
-
-static void notrace pxa_update_sched_clock(void)
-{
-	u32 cyc = OSCR;
-	update_sched_clock(&cd, cyc, (u32)~0);
+	return OSCR;
 }
 
 
@@ -105,19 +97,6 @@ static struct clock_event_device ckevt_pxa_osmr0 = {
 	.set_mode	= pxa_osmr0_set_mode,
 };
 
-static cycle_t pxa_read_oscr(struct clocksource *cs)
-{
-	return OSCR;
-}
-
-static struct clocksource cksrc_pxa_oscr0 = {
-	.name           = "oscr0",
-	.rating         = 200,
-	.read           = pxa_read_oscr,
-	.mask           = CLOCKSOURCE_MASK(32),
-	.flags		= CLOCK_SOURCE_IS_CONTINUOUS,
-};
-
 static struct irqaction pxa_ost0_irq = {
 	.name		= "ost0",
 	.flags		= IRQF_DISABLED | IRQF_TIMER | IRQF_IRQPOLL,
@@ -132,9 +111,8 @@ static void __init pxa_timer_init(void)
 	OIER = 0;
 	OSSR = OSSR_M0 | OSSR_M1 | OSSR_M2 | OSSR_M3;
 
-	init_sched_clock(&cd, pxa_update_sched_clock, 32, clock_tick_rate);
+	setup_sched_clock(pxa_read_sched_clock, 32, clock_tick_rate);
 
-	clocksource_calc_mult_shift(&cksrc_pxa_oscr0, clock_tick_rate, 4);
 	clockevents_calc_mult_shift(&ckevt_pxa_osmr0, clock_tick_rate, 4);
 	ckevt_pxa_osmr0.max_delta_ns =
 		clockevent_delta2ns(0x7fffffff, &ckevt_pxa_osmr0);
@@ -144,7 +122,8 @@ static void __init pxa_timer_init(void)
 
 	setup_irq(IRQ_OST0, &pxa_ost0_irq);
 
-	clocksource_register_hz(&cksrc_pxa_oscr0, clock_tick_rate);
+	clocksource_mmio_init(&OSCR, "oscr0", clock_tick_rate, 200, 32,
+		clocksource_mmio_readl_up);
 	clockevents_register_device(&ckevt_pxa_osmr0);
 }
 

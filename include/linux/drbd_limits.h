@@ -48,6 +48,11 @@
 #define DRBD_TIMEOUT_MAX 600
 #define DRBD_TIMEOUT_DEF 60       /* 6 seconds */
 
+ /* If backing disk takes longer than disk_timeout, mark the disk as failed */
+#define DRBD_DISK_TIMEOUT_MIN 0    /* 0 = disabled */
+#define DRBD_DISK_TIMEOUT_MAX 6000 /* 10 Minutes */
+#define DRBD_DISK_TIMEOUT_DEF 0    /* disabled */
+
   /* active connection retries when C_WF_CONNECTION */
 #define DRBD_CONNECT_INT_MIN 1
 #define DRBD_CONNECT_INT_MAX 120
@@ -60,7 +65,7 @@
 
  /* timeout for the ping packets.*/
 #define DRBD_PING_TIMEO_MIN  1
-#define DRBD_PING_TIMEO_MAX  100
+#define DRBD_PING_TIMEO_MAX  300
 #define DRBD_PING_TIMEO_DEF  5
 
   /* max number of write requests between write barriers */
@@ -117,10 +122,10 @@
 /* drbdsetup XY resize -d Z
  * you are free to reduce the device size to nothing, if you want to.
  * the upper limit with 64bit kernel, enough ram and flexible meta data
- * is 16 TB, currently. */
+ * is 1 PiB, currently. */
 /* DRBD_MAX_SECTORS */
 #define DRBD_DISK_SIZE_SECT_MIN  0
-#define DRBD_DISK_SIZE_SECT_MAX  (16 * (2LLU << 30))
+#define DRBD_DISK_SIZE_SECT_MAX  (1 * (2LLU << 40))
 #define DRBD_DISK_SIZE_SECT_DEF  0 /* = disabled = no user size... */
 
 #define DRBD_ON_IO_ERROR_DEF EP_PASS_ON

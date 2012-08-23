@@ -5,6 +5,7 @@
 #include <linux/module.h>
 #include <linux/mm.h>
 #include <linux/hugetlb.h>
+#include <asm/cacheflush.h>
 #include <asm/pgtable.h>
 
 static void change_page_attr(unsigned long addr, int numpages,
@@ -28,7 +29,7 @@ static void change_page_attr(unsigned long addr, int numpages,
 
 		pte = *ptep;
 		pte = set(pte);
-		ptep_invalidate(&init_mm, addr, ptep);
+		__ptep_ipte(addr, ptep);
 		*ptep = pte;
 		addr += PAGE_SIZE;
 	}
@@ -54,3 +55,8 @@ int set_memory_nx(unsigned long addr, int numpages)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(set_memory_nx);
+
+int set_memory_x(unsigned long addr, int numpages)
+{
+	return 0;
+}

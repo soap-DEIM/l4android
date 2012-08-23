@@ -22,7 +22,6 @@
 #include <linux/platform_device.h>
 #include <linux/pwm_backlight.h>
 #include <linux/i2c/pxa-i2c.h>
-#include <linux/sysdev.h>
 
 #include <asm/irq.h>
 #include <asm/mach-types.h>
@@ -184,7 +183,7 @@ static inline void income_lcd_init(void) {}
 /******************************************************************************
  * Backlight
  ******************************************************************************/
-#if defined(CONFIG_BACKLIGHT_PWM) || defined(CONFIG_BACKLIGHT_PWM__MODULE)
+#if defined(CONFIG_BACKLIGHT_PWM) || defined(CONFIG_BACKLIGHT_PWM_MODULE)
 static struct platform_pwm_backlight_data income_backlight_data = {
 	.pwm_id		= 0,
 	.max_brightness	= 0x3ff,

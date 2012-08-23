@@ -32,11 +32,17 @@
 #include <asm/syscalls.h>
 #include <asm/pgtable.h>
 #include <asm/homecache.h>
+#include <asm/cachectl.h>
 #include <arch/chip.h>
 
-SYSCALL_DEFINE0(flush_cache)
+SYSCALL_DEFINE3(cacheflush, unsigned long, addr, unsigned long, len,
+		unsigned long, flags)
 {
-	homecache_evict(cpumask_of(smp_processor_id()));
+	if (flags & DCACHE)
+		homecache_evict(cpumask_of(smp_processor_id()));
+	if (flags & ICACHE)
+		flush_remote(0, HV_FLUSH_EVICT_L1I, mm_cpumask(current->mm),
+			     0, 0, 0, NULL, NULL, 0);
 	return 0;
 }
 
@@ -54,13 +60,6 @@ SYSCALL_DEFINE0(flush_cache)
 ssize_t sys32_readahead(int fd, u32 offset_lo, u32 offset_hi, u32 count)
 {
 	return sys_readahead(fd, ((loff_t)offset_hi << 32) | offset_lo, count);
-}
-
-long sys32_fadvise64(int fd, u32 offset_lo, u32 offset_hi,
-		     u32 len, int advice)
-{
-	return sys_fadvise64_64(fd, ((loff_t)offset_hi << 32) | offset_lo,
-				len, advice);
 }
 
 int sys32_fadvise64_64(int fd, u32 offset_lo, u32 offset_hi,
@@ -103,10 +102,8 @@ SYSCALL_DEFINE6(mmap, unsigned long, addr, unsigned long, len,
 
 #ifndef __tilegx__
 /* See comments at the top of the file. */
-#define sys_fadvise64 sys32_fadvise64
 #define sys_fadvise64_64 sys32_fadvise64_64
 #define sys_readahead sys32_readahead
-#define sys_sync_file_range sys_sync_file_range2
 #endif
 
 /* Call the trampolines to manage pt_regs where necessary. */

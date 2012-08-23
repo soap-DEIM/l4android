@@ -49,7 +49,7 @@ struct fib_nh {
 	struct net_device	*nh_dev;
 	struct hlist_node	nh_hash;
 	struct fib_info		*nh_parent;
-	unsigned		nh_flags;
+	unsigned int		nh_flags;
 	unsigned char		nh_scope;
 #ifdef CONFIG_IP_ROUTE_MULTIPATH
 	int			nh_weight;
@@ -74,7 +74,7 @@ struct fib_info {
 	struct net		*fib_net;
 	int			fib_treeref;
 	atomic_t		fib_clntref;
-	unsigned		fib_flags;
+	unsigned int		fib_flags;
 	unsigned char		fib_dead;
 	unsigned char		fib_protocol;
 	unsigned char		fib_scope;
@@ -160,7 +160,8 @@ struct fib_table {
 	struct hlist_node tb_hlist;
 	u32		tb_id;
 	int		tb_default;
-	unsigned char	tb_data[0];
+	int		tb_num_default;
+	unsigned long	tb_data[0];
 };
 
 extern int fib_table_lookup(struct fib_table *tb, const struct flowi4 *flp,
@@ -227,9 +228,9 @@ extern struct fib_table *fib_get_table(struct net *net, u32 id);
 /* Exported by fib_frontend.c */
 extern const struct nla_policy rtm_ipv4_policy[];
 extern void		ip_fib_init(void);
-extern int fib_validate_source(__be32 src, __be32 dst, u8 tos, int oif,
-			       struct net_device *dev, __be32 *spec_dst,
-			       u32 *itag, u32 mark);
+extern int fib_validate_source(struct sk_buff *skb, __be32 src, __be32 dst,
+			       u8 tos, int oif, struct net_device *dev,
+			       __be32 *spec_dst, u32 *itag);
 extern void fib_select_default(struct fib_result *res);
 
 /* Exported by fib_semantics.c */

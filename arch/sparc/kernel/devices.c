@@ -17,12 +17,10 @@
 #include <asm/oplib.h>
 #include <asm/prom.h>
 #include <asm/smp.h>
-#include <asm/system.h>
 #include <asm/cpudata.h>
+#include <asm/cpu_type.h>
 
-extern void cpu_probe(void);
 extern void clock_stop_probe(void); /* tadpole.c */
-extern void sun4c_probe_memerr_reg(void);
 
 static char *cpu_mid_prop(void)
 {
@@ -115,7 +113,7 @@ int cpu_get_hwmid(phandle prom_node)
 
 void __init device_scan(void)
 {
-	prom_printf("Booting Linux...\n");
+	printk(KERN_NOTICE "Booting Linux...\n");
 
 #ifndef CONFIG_SMP
 	{
@@ -133,7 +131,6 @@ void __init device_scan(void)
 	}
 #endif /* !CONFIG_SMP */
 
-	cpu_probe();
 	{
 		extern void auxio_probe(void);
 		extern void auxio_power_probe(void);
@@ -141,7 +138,4 @@ void __init device_scan(void)
 		auxio_power_probe();
 	}
 	clock_stop_probe();
-
-	if (ARCH_SUN4C)
-		sun4c_probe_memerr_reg();
 }

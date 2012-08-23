@@ -17,13 +17,7 @@
 #define ERROR_APIC_VECTOR    21
 
 
-.section .rodata,"a"
-#include "syscall_table_32.S"
-
-
-syscall_table_size=(.-sys_call_table)
-.globl nr_syscalls
-nr_syscalls=(.-sys_call_table)/4
+	.section .entry.text, "ax"
 
 .macro RING0_INT_FRAME
 	CFI_STARTPROC simple
@@ -1364,6 +1358,7 @@ ENTRY(\sym)
 END(\sym)
 .endm
 
+#ifdef NOT_FOR_L4
 #ifdef CONFIG_SMP
 apicinterrupt IRQ_MOVE_CLEANUP_VECTOR \
 	irq_move_cleanup_interrupt smp_irq_move_cleanup_interrupt
@@ -1375,7 +1370,6 @@ apicinterrupt REBOOT_VECTOR \
 apicinterrupt UV_BAU_MESSAGE \
 	uv_bau_message_intr1 uv_bau_message_interrupt
 #endif
-#ifdef NOT_FOR_L4
 apicinterrupt LOCAL_TIMER_VECTOR \
 	apic_timer_interrupt smp_apic_timer_interrupt
 apicinterrupt X86_PLATFORM_IPI_VECTOR \
@@ -1531,6 +1525,7 @@ zeroentry simd_coprocessor_error do_simd_coprocessor_error
 	/* edi:  new selector */
 ENTRY(native_load_gs_index)
 	CFI_STARTPROC
+#if 0
 	pushfq_cfi
 	DISABLE_INTERRUPTS(CLBR_ANY & ~CLBR_RDI)
 	SWAPGS
@@ -1539,10 +1534,12 @@ gs_change:
 2:	mfence		/* workaround */
 	SWAPGS
 	popfq_cfi
+#endif
 	ret
 	CFI_ENDPROC
 END(native_load_gs_index)
 
+#if 0
 	.section __ex_table,"a"
 	.align 8
 	.quad gs_change,bad_gs
@@ -1555,6 +1552,7 @@ bad_gs:
 	movl %eax,%gs
 	jmp  2b
 	.previous
+#endif
 
 ENTRY(kernel_thread_helper)
 	pushq $0		# fake return address
@@ -1856,8 +1854,10 @@ error_kernelspace:
 	movl %ecx,%eax	/* zero extend */
 	cmpq %rax,RIP+8(%rsp)
 	je bstep_iret
+#if 0
 	cmpq $gs_change,RIP+8(%rsp)
 	je error_swapgs
+#endif
 	jmp error_sti
 
 bstep_iret:

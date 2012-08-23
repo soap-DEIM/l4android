@@ -270,7 +270,7 @@ static int install_session_keyring(struct key *keyring)
 	if (!new)
 		return -ENOMEM;
 
-	ret = install_session_keyring_to_cred(new, NULL);
+	ret = install_session_keyring_to_cred(new, keyring);
 	if (ret < 0) {
 		abort_creds(new);
 		return ret;
@@ -331,6 +331,7 @@ void key_fsgid_changed(struct task_struct *tsk)
 key_ref_t search_my_process_keyrings(struct key_type *type,
 				     const void *description,
 				     key_match_func_t match,
+				     bool no_state_check,
 				     const struct cred *cred)
 {
 	key_ref_t key_ref, ret, err;
@@ -350,7 +351,7 @@ key_ref_t search_my_process_keyrings(struct key_type *type,
 	if (cred->thread_keyring) {
 		key_ref = keyring_search_aux(
 			make_key_ref(cred->thread_keyring, 1),
-			cred, type, description, match);
+			cred, type, description, match, no_state_check);
 		if (!IS_ERR(key_ref))
 			goto found;
 
@@ -371,7 +372,7 @@ key_ref_t search_my_process_keyrings(struct key_type *type,
 	if (cred->tgcred->process_keyring) {
 		key_ref = keyring_search_aux(
 			make_key_ref(cred->tgcred->process_keyring, 1),
-			cred, type, description, match);
+			cred, type, description, match, no_state_check);
 		if (!IS_ERR(key_ref))
 			goto found;
 
@@ -395,7 +396,7 @@ key_ref_t search_my_process_keyrings(struct key_type *type,
 			make_key_ref(rcu_dereference(
 					     cred->tgcred->session_keyring),
 				     1),
-			cred, type, description, match);
+			cred, type, description, match, no_state_check);
 		rcu_read_unlock();
 
 		if (!IS_ERR(key_ref))
@@ -417,7 +418,7 @@ key_ref_t search_my_process_keyrings(struct key_type *type,
 	else if (cred->user->session_keyring) {
 		key_ref = keyring_search_aux(
 			make_key_ref(cred->user->session_keyring, 1),
-			cred, type, description, match);
+			cred, type, description, match, no_state_check);
 		if (!IS_ERR(key_ref))
 			goto found;
 
@@ -459,7 +460,8 @@ key_ref_t search_process_keyrings(struct key_type *type,
 
 	might_sleep();
 
-	key_ref = search_my_process_keyrings(type, description, match, cred);
+	key_ref = search_my_process_keyrings(type, description, match,
+					     false, cred);
 	if (!IS_ERR(key_ref))
 		goto found;
 	err = key_ref;
@@ -587,9 +589,19 @@ try_again:
 			ret = install_user_keyrings();
 			if (ret < 0)
 				goto error;
-			ret = install_session_keyring(
-				cred->user->session_keyring);
+			if (lflags & KEY_LOOKUP_CREATE)
+				ret = join_session_keyring(NULL);
+			else
+				ret = install_session_keyring(
+					cred->user->session_keyring);
 
+			if (ret < 0)
+				goto error;
+			goto reget_creds;
+		} else if (cred->tgcred->session_keyring ==
+			   cred->user->session_keyring &&
+			   lflags & KEY_LOOKUP_CREATE) {
+			ret = join_session_keyring(NULL);
 			if (ret < 0)
 				goto error;
 			goto reget_creds;
@@ -645,7 +657,8 @@ try_again:
 			goto error;
 
 		down_read(&cred->request_key_auth->sem);
-		if (cred->request_key_auth->flags & KEY_FLAG_REVOKED) {
+		if (test_bit(KEY_FLAG_REVOKED,
+			     &cred->request_key_auth->flags)) {
 			key_ref = ERR_PTR(-EKEYREVOKED);
 			key = NULL;
 		} else {
@@ -718,6 +731,8 @@ try_again:
 	ret = key_task_permission(key_ref, cred, perm);
 	if (ret < 0)
 		goto invalid_key;
+
+	key->last_used_at = current_kernel_time().tv_sec;
 
 error:
 	put_cred(cred);
@@ -819,23 +834,17 @@ error:
  * Replace a process's session keyring on behalf of one of its children when
  * the target  process is about to resume userspace execution.
  */
-void key_replace_session_keyring(void)
+void key_change_session_keyring(struct task_work *twork)
 {
-	const struct cred *old;
-	struct cred *new;
+	const struct cred *old = current_cred();
+	struct cred *new = twork->data;
 
-	if (!current->replacement_session_keyring)
+	kfree(twork);
+	if (unlikely(current->flags & PF_EXITING)) {
+		put_cred(new);
 		return;
+	}
 
-	write_lock_irq(&tasklist_lock);
-	new = current->replacement_session_keyring;
-	current->replacement_session_keyring = NULL;
-	write_unlock_irq(&tasklist_lock);
-
-	if (!new)
-		return;
-
-	old = current_cred();
 	new->  uid	= old->  uid;
 	new-> euid	= old-> euid;
 	new-> suid	= old-> suid;
@@ -845,6 +854,7 @@ void key_replace_session_keyring(void)
 	new-> sgid	= old-> sgid;
 	new->fsgid	= old->fsgid;
 	new->user	= get_uid(old->user);
+	new->user_ns	= get_user_ns(new->user_ns);
 	new->group_info	= get_group_info(old->group_info);
 
 	new->securebits	= old->securebits;

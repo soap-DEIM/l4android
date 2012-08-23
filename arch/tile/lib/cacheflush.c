@@ -15,6 +15,7 @@
 #include <asm/page.h>
 #include <asm/cacheflush.h>
 #include <arch/icache.h>
+#include <arch/spr_def.h>
 
 
 void __flush_icache_range(unsigned long start, unsigned long end)
@@ -38,7 +39,33 @@ void finv_buffer_remote(void *buffer, size_t size, int hfh)
 {
 	char *p, *base;
 	size_t step_size, load_count;
+
+	/*
+	 * On TILEPro the striping granularity is a fixed 8KB; on
+	 * TILE-Gx it is configurable, and we rely on the fact that
+	 * the hypervisor always configures maximum striping, so that
+	 * bits 9 and 10 of the PA are part of the stripe function, so
+	 * every 512 bytes we hit a striping boundary.
+	 *
+	 */
+#ifdef __tilegx__
+	const unsigned long STRIPE_WIDTH = 512;
+#else
 	const unsigned long STRIPE_WIDTH = 8192;
+#endif
+
+#ifdef __tilegx__
+	/*
+	 * On TILE-Gx, we must disable the dstream prefetcher before doing
+	 * a cache flush; otherwise, we could end up with data in the cache
+	 * that we don't want there.  Note that normally we'd do an mf
+	 * after the SPR write to disabling the prefetcher, but we do one
+	 * below, before any further loads, so there's no need to do it
+	 * here.
+	 */
+	uint_reg_t old_dstream_pf = __insn_mfspr(SPR_DSTREAM_PF);
+	__insn_mtspr(SPR_DSTREAM_PF, 0);
+#endif
 
 	/*
 	 * Flush and invalidate the buffer out of the local L1/L2
@@ -61,7 +88,7 @@ void finv_buffer_remote(void *buffer, size_t size, int hfh)
 	 * memory, that one load would be sufficient, but since we may
 	 * be, we also need to back up to the last load issued to
 	 * another memory controller, which would be the point where
-	 * we crossed an 8KB boundary (the granularity of striping
+	 * we crossed a "striping" boundary (the granularity of striping
 	 * across memory controllers).  Keep backing up and doing this
 	 * until we are before the beginning of the buffer, or have
 	 * hit all the controllers.
@@ -75,12 +102,22 @@ void finv_buffer_remote(void *buffer, size_t size, int hfh)
 	 * every cache line on a full memory stripe on each
 	 * controller" that we simply do that, to simplify the logic.
 	 *
-	 * FIXME: See bug 9535 for some issues with this code.
+	 * On TILE-Gx the hash-for-home function is much more complex,
+	 * with the upshot being we can't readily guarantee we have
+	 * hit both entries in the 128-entry AMT that were hit by any
+	 * load in the entire range, so we just re-load them all.
+	 * With larger buffers, we may want to consider using a hypervisor
+	 * trap to issue loads directly to each hash-for-home tile for
+	 * each controller (doing it from Linux would trash the TLB).
 	 */
 	if (hfh) {
 		step_size = L2_CACHE_BYTES;
+#ifdef __tilegx__
+		load_count = (size + L2_CACHE_BYTES - 1) / L2_CACHE_BYTES;
+#else
 		load_count = (STRIPE_WIDTH / L2_CACHE_BYTES) *
 			      (1 << CHIP_LOG_NUM_MSHIMS());
+#endif
 	} else {
 		step_size = STRIPE_WIDTH;
 		load_count = (1 << CHIP_LOG_NUM_MSHIMS());
@@ -96,7 +133,7 @@ void finv_buffer_remote(void *buffer, size_t size, int hfh)
 
 	/* Figure out how far back we need to go. */
 	base = p - (step_size * (load_count - 2));
-	if ((long)base < (long)buffer)
+	if ((unsigned long)base < (unsigned long)buffer)
 		base = buffer;
 
 	/*
@@ -122,4 +159,9 @@ void finv_buffer_remote(void *buffer, size_t size, int hfh)
 
 	/* Wait for the load+inv's (and thus finvs) to have completed. */
 	__insn_mf();
+
+#ifdef __tilegx__
+	/* Reenable the prefetcher. */
+	__insn_mtspr(SPR_DSTREAM_PF, old_dstream_pf);
+#endif
 }

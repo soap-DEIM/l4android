@@ -15,40 +15,26 @@
 #include <linux/i2c/twl.h>
 #include <linux/spi/spi.h>
 #include <plat/mcspi.h>
-#include <plat/display.h>
+#include <video/omapdss.h>
+#include <mach/board-zoom.h>
 
 #define LCD_PANEL_RESET_GPIO_PROD	96
 #define LCD_PANEL_RESET_GPIO_PILOT	55
 #define LCD_PANEL_QVGA_GPIO		56
 
-static void zoom_lcd_panel_init(void)
-{
-	int ret;
-	unsigned char lcd_panel_reset_gpio;
+static struct gpio zoom_lcd_gpios[] __initdata = {
+	{ -EINVAL,		GPIOF_OUT_INIT_HIGH, "lcd reset" },
+	{ LCD_PANEL_QVGA_GPIO,	GPIOF_OUT_INIT_HIGH, "lcd qvga"	 },
+};
 
-	lcd_panel_reset_gpio = (omap_rev() > OMAP3430_REV_ES3_0) ?
+static void __init zoom_lcd_panel_init(void)
+{
+	zoom_lcd_gpios[0].gpio = (omap_rev() > OMAP3430_REV_ES3_0) ?
 			LCD_PANEL_RESET_GPIO_PROD :
 			LCD_PANEL_RESET_GPIO_PILOT;
 
-	ret = gpio_request(lcd_panel_reset_gpio, "lcd reset");
-	if (ret) {
-		pr_err("Failed to get LCD reset GPIO (gpio%d).\n",
-			lcd_panel_reset_gpio);
-		return;
-	}
-	gpio_direction_output(lcd_panel_reset_gpio, 1);
-
-	ret = gpio_request(LCD_PANEL_QVGA_GPIO, "lcd qvga");
-	if (ret) {
-		pr_err("Failed to get LCD_PANEL_QVGA_GPIO (gpio%d).\n",
-			LCD_PANEL_QVGA_GPIO);
-		goto err0;
-	}
-	gpio_direction_output(LCD_PANEL_QVGA_GPIO, 1);
-
-	return;
-err0:
-	gpio_free(lcd_panel_reset_gpio);
+	if (gpio_request_array(zoom_lcd_gpios, ARRAY_SIZE(zoom_lcd_gpios)))
+		pr_err("%s: Failed to get LCD GPIOs.\n", __func__);
 }
 
 static int zoom_panel_enable_lcd(struct omap_dss_device *dssdev)
@@ -70,6 +56,7 @@ static void zoom_panel_disable_lcd(struct omap_dss_device *dssdev)
 
 static int zoom_set_bl_intensity(struct omap_dss_device *dssdev, int level)
 {
+#ifdef CONFIG_TWL4030_CORE
 	unsigned char c;
 	u8 mux_pwm, enb_pwm;
 
@@ -105,6 +92,9 @@ static int zoom_set_bl_intensity(struct omap_dss_device *dssdev, int level)
 	c = ((50 * (100 - level)) / 100) + 1;
 	twl_i2c_write_u8(TWL4030_MODULE_PWM1, 0x7F, TWL_LED_PWMOFF);
 	twl_i2c_write_u8(TWL4030_MODULE_PWM1, c, TWL_LED_PWMON);
+#else
+	pr_warn("Backlight not enabled\n");
+#endif
 
 	return 0;
 }
@@ -132,7 +122,6 @@ static struct omap_dss_board_info zoom_dss_data = {
 
 static struct omap2_mcspi_device_config dss_lcd_mcspi_config = {
 	.turbo_mode		= 1,
-	.single_channel	= 1,  /* 0: slave, 1: master */
 };
 
 static struct spi_board_info nec_8048_spi_board_info[] __initdata = {

@@ -41,6 +41,7 @@
 #include <linux/types.h>
 #include <linux/ioctl.h>
 #include <linux/magic.h>
+#include <linux/bug.h>
 
 
 #define NILFS_INODE_BMAP_SIZE	7
@@ -107,7 +108,7 @@ struct nilfs_super_root {
 #define NILFS_SR_DAT_OFFSET(inode_size)     NILFS_SR_MDT_OFFSET(inode_size, 0)
 #define NILFS_SR_CPFILE_OFFSET(inode_size)  NILFS_SR_MDT_OFFSET(inode_size, 1)
 #define NILFS_SR_SUFILE_OFFSET(inode_size)  NILFS_SR_MDT_OFFSET(inode_size, 2)
-#define NILFS_SR_BYTES                  (sizeof(struct nilfs_super_root))
+#define NILFS_SR_BYTES(inode_size)	    NILFS_SR_MDT_OFFSET(inode_size, 3)
 
 /*
  * Maximal mount counts
@@ -845,5 +846,7 @@ struct nilfs_bdesc {
 	_IOR(NILFS_IOCTL_IDENT, 0x8A, __u64)
 #define NILFS_IOCTL_RESIZE  \
 	_IOW(NILFS_IOCTL_IDENT, 0x8B, __u64)
+#define NILFS_IOCTL_SET_ALLOC_RANGE  \
+	_IOW(NILFS_IOCTL_IDENT, 0x8C, __u64[2])
 
 #endif	/* _LINUX_NILFS_FS_H */

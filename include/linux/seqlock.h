@@ -28,6 +28,7 @@
 
 #include <linux/spinlock.h>
 #include <linux/preempt.h>
+#include <asm/processor.h>
 
 typedef struct {
 	unsigned sequence;
@@ -40,9 +41,6 @@ typedef struct {
  */
 #define __SEQLOCK_UNLOCKED(lockname) \
 		 { 0, __SPIN_LOCK_UNLOCKED(lockname) }
-
-#define SEQLOCK_UNLOCKED \
-		 __SEQLOCK_UNLOCKED(old_style_seqlock_init)
 
 #define seqlock_init(x)					\
 	do {						\
@@ -88,12 +86,12 @@ static __always_inline unsigned read_seqbegin(const seqlock_t *sl)
 	unsigned ret;
 
 repeat:
-	ret = sl->sequence;
-	smp_rmb();
+	ret = ACCESS_ONCE(sl->sequence);
 	if (unlikely(ret & 1)) {
 		cpu_relax();
 		goto repeat;
 	}
+	smp_rmb();
 
 	return ret;
 }
@@ -143,7 +141,7 @@ static inline unsigned __read_seqcount_begin(const seqcount_t *s)
 	unsigned ret;
 
 repeat:
-	ret = s->sequence;
+	ret = ACCESS_ONCE(s->sequence);
 	if (unlikely(ret & 1)) {
 		cpu_relax();
 		goto repeat;
@@ -165,6 +163,27 @@ static inline unsigned read_seqcount_begin(const seqcount_t *s)
 	unsigned ret = __read_seqcount_begin(s);
 	smp_rmb();
 	return ret;
+}
+
+/**
+ * raw_seqcount_begin - begin a seq-read critical section
+ * @s: pointer to seqcount_t
+ * Returns: count to be passed to read_seqcount_retry
+ *
+ * raw_seqcount_begin opens a read critical section of the given seqcount.
+ * Validity of the critical section is tested by checking read_seqcount_retry
+ * function.
+ *
+ * Unlike read_seqcount_begin(), this function will not wait for the count
+ * to stabilize. If a writer is active when we begin, we will fail the
+ * read_seqcount_retry() instead of stabilizing at the beginning of the
+ * critical section.
+ */
+static inline unsigned raw_seqcount_begin(const seqcount_t *s)
+{
+	unsigned ret = ACCESS_ONCE(s->sequence);
+	smp_rmb();
+	return ret & ~1;
 }
 
 /**

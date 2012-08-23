@@ -14,7 +14,6 @@
 
 
 #include <linux/kernel.h>
-#include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/smp.h>
 #include <linux/interrupt.h>
@@ -23,11 +22,11 @@
 #include <linux/spinlock.h>
 #include <linux/cache.h>
 #include <linux/err.h>
-#include <linux/sysdev.h>
+#include <linux/device.h>
 #include <linux/cpu.h>
 
 #include <asm/ptrace.h>
-#include <asm/atomic.h>
+#include <linux/atomic.h>
 #include <asm/irq.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
@@ -38,16 +37,15 @@
 #include <asm/machdep.h>
 #include <asm/cputable.h>
 #include <asm/firmware.h>
-#include <asm/system.h>
 #include <asm/rtas.h>
 #include <asm/pSeries_reconfig.h>
 #include <asm/mpic.h>
 #include <asm/vdso_datapage.h>
 #include <asm/cputhreads.h>
+#include <asm/xics.h>
 
 #include "plpar_wrappers.h"
 #include "pseries.h"
-#include "xics.h"
 #include "offline_states.h"
 
 
@@ -136,7 +134,6 @@ out:
 	return 1;
 }
 
-#ifdef CONFIG_XICS
 static void __devinit smp_xics_setup_cpu(int cpu)
 {
 	if (cpu != boot_cpuid)
@@ -150,15 +147,15 @@ static void __devinit smp_xics_setup_cpu(int cpu)
 	set_cpu_current_state(cpu, CPU_STATE_ONLINE);
 	set_default_offline_state(cpu);
 #endif
+	pseries_notify_cpuidle_add_cpu(cpu);
 }
-#endif /* CONFIG_XICS */
 
-static void __devinit smp_pSeries_kick_cpu(int nr)
+static int __devinit smp_pSeries_kick_cpu(int nr)
 {
 	BUG_ON(nr < 0 || nr >= NR_CPUS);
 
 	if (!smp_startup_cpu(nr))
-		return;
+		return -ENOENT;
 
 	/*
 	 * The processor is currently spinning, waiting for the
@@ -180,6 +177,8 @@ static void __devinit smp_pSeries_kick_cpu(int nr)
 						"Ret= %ld\n", nr, rc);
 	}
 #endif
+
+	return 0;
 }
 
 static int smp_pSeries_cpu_bootable(unsigned int nr)
@@ -197,23 +196,22 @@ static int smp_pSeries_cpu_bootable(unsigned int nr)
 
 	return 1;
 }
-#ifdef CONFIG_MPIC
+
 static struct smp_ops_t pSeries_mpic_smp_ops = {
 	.message_pass	= smp_mpic_message_pass,
 	.probe		= smp_mpic_probe,
 	.kick_cpu	= smp_pSeries_kick_cpu,
 	.setup_cpu	= smp_mpic_setup_cpu,
 };
-#endif
-#ifdef CONFIG_XICS
+
 static struct smp_ops_t pSeries_xics_smp_ops = {
-	.message_pass	= smp_xics_message_pass,
-	.probe		= smp_xics_probe,
+	.message_pass	= NULL,	/* Use smp_muxed_ipi_message_pass */
+	.cause_ipi	= NULL,	/* Filled at runtime by xics_smp_probe() */
+	.probe		= xics_smp_probe,
 	.kick_cpu	= smp_pSeries_kick_cpu,
 	.setup_cpu	= smp_xics_setup_cpu,
 	.cpu_bootable	= smp_pSeries_cpu_bootable,
 };
-#endif
 
 /* This is called very early */
 static void __init smp_init_pseries(void)
@@ -245,14 +243,12 @@ static void __init smp_init_pseries(void)
 	pr_debug(" <- smp_init_pSeries()\n");
 }
 
-#ifdef CONFIG_MPIC
 void __init smp_init_pseries_mpic(void)
 {
 	smp_ops = &pSeries_mpic_smp_ops;
 
 	smp_init_pseries();
 }
-#endif
 
 void __init smp_init_pseries_xics(void)
 {

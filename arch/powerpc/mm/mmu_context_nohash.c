@@ -292,6 +292,11 @@ int init_new_context(struct task_struct *t, struct mm_struct *mm)
 	mm->context.id = MMU_NO_CONTEXT;
 	mm->context.active = 0;
 
+#ifdef CONFIG_PPC_MM_SLICES
+	if (slice_mm_new_context(mm))
+		slice_set_user_psize(mm, mmu_virtual_psize);
+#endif
+
 	return 0;
 }
 
@@ -328,9 +333,7 @@ static int __cpuinit mmu_context_cpu_notify(struct notifier_block *self,
 					    unsigned long action, void *hcpu)
 {
 	unsigned int cpu = (unsigned int)(long)hcpu;
-#ifdef CONFIG_HOTPLUG_CPU
-	struct task_struct *p;
-#endif
+
 	/* We don't touch CPU 0 map, it's allocated at aboot and kept
 	 * around forever
 	 */
@@ -338,12 +341,14 @@ static int __cpuinit mmu_context_cpu_notify(struct notifier_block *self,
 		return NOTIFY_OK;
 
 	switch (action) {
-	case CPU_ONLINE:
-	case CPU_ONLINE_FROZEN:
+	case CPU_UP_PREPARE:
+	case CPU_UP_PREPARE_FROZEN:
 		pr_devel("MMU: Allocating stale context map for CPU %d\n", cpu);
 		stale_map[cpu] = kzalloc(CTX_MAP_SIZE, GFP_KERNEL);
 		break;
 #ifdef CONFIG_HOTPLUG_CPU
+	case CPU_UP_CANCELED:
+	case CPU_UP_CANCELED_FROZEN:
 	case CPU_DEAD:
 	case CPU_DEAD_FROZEN:
 		pr_devel("MMU: Freeing stale context map for CPU %d\n", cpu);
@@ -351,12 +356,7 @@ static int __cpuinit mmu_context_cpu_notify(struct notifier_block *self,
 		stale_map[cpu] = NULL;
 
 		/* We also clear the cpu_vm_mask bits of CPUs going away */
-		read_lock(&tasklist_lock);
-		for_each_process(p) {
-			if (p->mm)
-				cpumask_clear_cpu(cpu, mm_cpumask(p->mm));
-		}
-		read_unlock(&tasklist_lock);
+		clear_tasks_mm_cpumask(cpu);
 	break;
 #endif /* CONFIG_HOTPLUG_CPU */
 	}
@@ -407,7 +407,17 @@ void __init mmu_context_init(void)
 	} else if (mmu_has_feature(MMU_FTR_TYPE_47x)) {
 		first_context = 1;
 		last_context = 65535;
-	} else {
+	} else
+#ifdef CONFIG_PPC_BOOK3E_MMU
+	if (mmu_has_feature(MMU_FTR_TYPE_3E)) {
+		u32 mmucfg = mfspr(SPRN_MMUCFG);
+		u32 pid_bits = (mmucfg & MMUCFG_PIDSIZE_MASK)
+				>> MMUCFG_PIDSIZE_SHIFT;
+		first_context = 1;
+		last_context = (1UL << (pid_bits + 1)) - 1;
+	} else
+#endif
+	{
 		first_context = 1;
 		last_context = 255;
 	}

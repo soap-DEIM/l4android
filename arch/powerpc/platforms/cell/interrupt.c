@@ -31,7 +31,7 @@
 
 #include <linux/interrupt.h>
 #include <linux/irq.h>
-#include <linux/module.h>
+#include <linux/export.h>
 #include <linux/percpu.h>
 #include <linux/types.h>
 #include <linux/ioport.h>
@@ -56,7 +56,7 @@ struct iic {
 
 static DEFINE_PER_CPU(struct iic, cpu_iic);
 #define IIC_NODE_COUNT	2
-static struct irq_host *iic_host;
+static struct irq_domain *iic_host;
 
 /* Convert between "pending" bits and hw irq number */
 static irq_hw_number_t iic_pending_to_hwnum(struct cbe_iic_pending_bits bits)
@@ -176,66 +176,59 @@ EXPORT_SYMBOL_GPL(iic_get_target_id);
 #ifdef CONFIG_SMP
 
 /* Use the highest interrupt priorities for IPI */
-static inline int iic_ipi_to_irq(int ipi)
+static inline int iic_msg_to_irq(int msg)
 {
-	return IIC_IRQ_TYPE_IPI + 0xf - ipi;
+	return IIC_IRQ_TYPE_IPI + 0xf - msg;
 }
 
-void iic_cause_IPI(int cpu, int mesg)
+void iic_message_pass(int cpu, int msg)
 {
-	out_be64(&per_cpu(cpu_iic, cpu).regs->generate, (0xf - mesg) << 4);
+	out_be64(&per_cpu(cpu_iic, cpu).regs->generate, (0xf - msg) << 4);
 }
 
-struct irq_host *iic_get_irq_host(int node)
+struct irq_domain *iic_get_irq_host(int node)
 {
 	return iic_host;
 }
 EXPORT_SYMBOL_GPL(iic_get_irq_host);
 
-static irqreturn_t iic_ipi_action(int irq, void *dev_id)
-{
-	int ipi = (int)(long)dev_id;
-
-	smp_message_recv(ipi);
-
-	return IRQ_HANDLED;
-}
-static void iic_request_ipi(int ipi, const char *name)
+static void iic_request_ipi(int msg)
 {
 	int virq;
 
-	virq = irq_create_mapping(iic_host, iic_ipi_to_irq(ipi));
+	virq = irq_create_mapping(iic_host, iic_msg_to_irq(msg));
 	if (virq == NO_IRQ) {
 		printk(KERN_ERR
-		       "iic: failed to map IPI %s\n", name);
+		       "iic: failed to map IPI %s\n", smp_ipi_name[msg]);
 		return;
 	}
-	if (request_irq(virq, iic_ipi_action, IRQF_DISABLED, name,
-			(void *)(long)ipi))
-		printk(KERN_ERR
-		       "iic: failed to request IPI %s\n", name);
+
+	/*
+	 * If smp_request_message_ipi encounters an error it will notify
+	 * the error.  If a message is not needed it will return non-zero.
+	 */
+	if (smp_request_message_ipi(virq, msg))
+		irq_dispose_mapping(virq);
 }
 
 void iic_request_IPIs(void)
 {
-	iic_request_ipi(PPC_MSG_CALL_FUNCTION, "IPI-call");
-	iic_request_ipi(PPC_MSG_RESCHEDULE, "IPI-resched");
-	iic_request_ipi(PPC_MSG_CALL_FUNC_SINGLE, "IPI-call-single");
-#ifdef CONFIG_DEBUGGER
-	iic_request_ipi(PPC_MSG_DEBUGGER_BREAK, "IPI-debug");
-#endif /* CONFIG_DEBUGGER */
+	iic_request_ipi(PPC_MSG_CALL_FUNCTION);
+	iic_request_ipi(PPC_MSG_RESCHEDULE);
+	iic_request_ipi(PPC_MSG_CALL_FUNC_SINGLE);
+	iic_request_ipi(PPC_MSG_DEBUGGER_BREAK);
 }
 
 #endif /* CONFIG_SMP */
 
 
-static int iic_host_match(struct irq_host *h, struct device_node *node)
+static int iic_host_match(struct irq_domain *h, struct device_node *node)
 {
 	return of_device_is_compatible(node,
 				    "IBM,CBEA-Internal-Interrupt-Controller");
 }
 
-static int iic_host_map(struct irq_host *h, unsigned int virq,
+static int iic_host_map(struct irq_domain *h, unsigned int virq,
 			irq_hw_number_t hw)
 {
 	switch (hw & IIC_IRQ_TYPE_MASK) {
@@ -252,7 +245,7 @@ static int iic_host_map(struct irq_host *h, unsigned int virq,
 	return 0;
 }
 
-static int iic_host_xlate(struct irq_host *h, struct device_node *ct,
+static int iic_host_xlate(struct irq_domain *h, struct device_node *ct,
 			   const u32 *intspec, unsigned int intsize,
 			   irq_hw_number_t *out_hwirq, unsigned int *out_flags)
 
@@ -292,7 +285,7 @@ static int iic_host_xlate(struct irq_host *h, struct device_node *ct,
 	return 0;
 }
 
-static struct irq_host_ops iic_host_ops = {
+static const struct irq_domain_ops iic_host_ops = {
 	.match = iic_host_match,
 	.map = iic_host_map,
 	.xlate = iic_host_xlate,
@@ -385,8 +378,8 @@ static int __init setup_iic(void)
 void __init iic_init_IRQ(void)
 {
 	/* Setup an irq host data structure */
-	iic_host = irq_alloc_host(NULL, IRQ_HOST_MAP_LINEAR, IIC_SOURCE_COUNT,
-				  &iic_host_ops, IIC_IRQ_INVALID);
+	iic_host = irq_domain_add_linear(NULL, IIC_SOURCE_COUNT, &iic_host_ops,
+					 NULL);
 	BUG_ON(iic_host == NULL);
 	irq_set_default_host(iic_host);
 

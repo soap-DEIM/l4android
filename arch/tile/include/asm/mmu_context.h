@@ -30,11 +30,15 @@ init_new_context(struct task_struct *tsk, struct mm_struct *mm)
 	return 0;
 }
 
-/* Note that arch/tile/kernel/head.S also calls hv_install_context() */
+/*
+ * Note that arch/tile/kernel/head_NN.S and arch/tile/mm/migrate_NN.S
+ * also call hv_install_context().
+ */
 static inline void __install_page_table(pgd_t *pgdir, int asid, pgprot_t prot)
 {
 	/* FIXME: DIRECTIO should not always be set. FIXME. */
-	int rc = hv_install_context(__pa(pgdir), prot, asid, HV_CTX_DIRECTIO);
+	int rc = hv_install_context(__pa(pgdir), prot, asid,
+				    HV_CTX_DIRECTIO | CTX_PAGE_FLAG);
 	if (rc < 0)
 		panic("hv_install_context failed: %d", rc);
 }
@@ -100,8 +104,8 @@ static inline void switch_mm(struct mm_struct *prev, struct mm_struct *next,
 		__get_cpu_var(current_asid) = asid;
 
 		/* Clear cpu from the old mm, and set it in the new one. */
-		cpumask_clear_cpu(cpu, &prev->cpu_vm_mask);
-		cpumask_set_cpu(cpu, &next->cpu_vm_mask);
+		cpumask_clear_cpu(cpu, mm_cpumask(prev));
+		cpumask_set_cpu(cpu, mm_cpumask(next));
 
 		/* Re-load page tables */
 		install_page_table(next->pgd, asid);

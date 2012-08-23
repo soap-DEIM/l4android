@@ -28,13 +28,13 @@
 #include <linux/poison.h>
 #include <linux/dma-mapping.h>
 #include <linux/module.h>
+#include <linux/memory.h>
 #include <linux/memory_hotplug.h>
 #include <linux/nmi.h>
 #include <linux/gfp.h>
 
 #include <asm/processor.h>
 #include <asm/bios_ebda.h>
-#include <asm/system.h>
 #include <asm/uaccess.h>
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -53,6 +53,8 @@
 #include <asm/init.h>
 #include <asm/uv/uv.h>
 #include <asm/setup.h>
+
+#include <asm/l4lxapi/memory.h>
 
 static int __init parse_direct_gbpages_off(char *arg)
 {
@@ -329,7 +331,11 @@ static __ref void *alloc_low_page(unsigned long *phys)
 	if (pfn >= pgt_buf_top)
 		panic("alloc_low_page: ran out of memory");
 
+#ifdef CONFIG_L4
+	adr = __va(pfn * PAGE_SIZE);
+#else
 	adr = early_memremap(pfn * PAGE_SIZE, PAGE_SIZE);
+#endif
 	clear_page(adr);
 	*phys  = pfn * PAGE_SIZE;
 	return adr;
@@ -356,7 +362,9 @@ static __ref void unmap_low_page(void *adr)
 	if (after_bootmem)
 		return;
 
+#ifndef CONFIG_L4
 	early_iounmap((void *)((unsigned long)adr & PAGE_MASK), PAGE_SIZE);
+#endif
 }
 
 static unsigned long __meminit
@@ -407,12 +415,12 @@ static unsigned long __meminit
 phys_pmd_init(pmd_t *pmd_page, unsigned long address, unsigned long end,
 	      unsigned long page_size_mask, pgprot_t prot)
 {
-	unsigned long pages = 0;
+	unsigned long pages = 0, next;
 	unsigned long last_map_addr = end;
 
 	int i = pmd_index(address);
 
-	for (; i < PTRS_PER_PMD; i++, address += PMD_SIZE) {
+	for (; i < PTRS_PER_PMD; i++, address = next) {
 		unsigned long pte_phys;
 		pmd_t *pmd = pmd_page + pmd_index(address);
 		pte_t *pte;
@@ -425,6 +433,8 @@ phys_pmd_init(pmd_t *pmd_page, unsigned long address, unsigned long end,
 			}
 			break;
 		}
+
+		next = (address & PMD_MASK) + PMD_SIZE;
 
 		if (pmd_val(*pmd)) {
 			if (!pmd_large(*pmd)) {
@@ -449,7 +459,7 @@ phys_pmd_init(pmd_t *pmd_page, unsigned long address, unsigned long end,
 			 * attributes.
 			 */
 			if (page_size_mask & (1 << PG_LEVEL_2M)) {
-				pages++;
+				last_map_addr = next;
 				continue;
 			}
 			new_prot = pte_pgprot(pte_clrhuge(*(pte_t *)pmd));
@@ -462,7 +472,7 @@ phys_pmd_init(pmd_t *pmd_page, unsigned long address, unsigned long end,
 				pfn_pte(address >> PAGE_SHIFT,
 					__pgprot(pgprot_val(prot) | _PAGE_PSE)));
 			spin_unlock(&init_mm.page_table_lock);
-			last_map_addr = (address & PMD_MASK) + PMD_SIZE;
+			last_map_addr = next;
 			continue;
 		}
 
@@ -482,11 +492,11 @@ static unsigned long __meminit
 phys_pud_init(pud_t *pud_page, unsigned long addr, unsigned long end,
 			 unsigned long page_size_mask)
 {
-	unsigned long pages = 0;
+	unsigned long pages = 0, next;
 	unsigned long last_map_addr = end;
 	int i = pud_index(addr);
 
-	for (; i < PTRS_PER_PUD; i++, addr = (addr & PUD_MASK) + PUD_SIZE) {
+	for (; i < PTRS_PER_PUD; i++, addr = next) {
 		unsigned long pmd_phys;
 		pud_t *pud = pud_page + pud_index(addr);
 		pmd_t *pmd;
@@ -495,8 +505,9 @@ phys_pud_init(pud_t *pud_page, unsigned long addr, unsigned long end,
 		if (addr >= end)
 			break;
 
-		if (!after_bootmem &&
-				!e820_any_mapped(addr, addr+PUD_SIZE, 0)) {
+		next = (addr & PUD_MASK) + PUD_SIZE;
+
+		if (!after_bootmem && !e820_any_mapped(addr, next, 0)) {
 			set_pud(pud, __pud(0));
 			continue;
 		}
@@ -523,7 +534,7 @@ phys_pud_init(pud_t *pud_page, unsigned long addr, unsigned long end,
 			 * attributes.
 			 */
 			if (page_size_mask & (1 << PG_LEVEL_1G)) {
-				pages++;
+				last_map_addr = next;
 				continue;
 			}
 			prot = pte_pgprot(pte_clrhuge(*(pte_t *)pud));
@@ -535,7 +546,7 @@ phys_pud_init(pud_t *pud_page, unsigned long addr, unsigned long end,
 			set_pte((pte_t *)pud,
 				pfn_pte(addr >> PAGE_SHIFT, PAGE_KERNEL_LARGE));
 			spin_unlock(&init_mm.page_table_lock);
-			last_map_addr = (addr & PUD_MASK) + PUD_SIZE;
+			last_map_addr = next;
 			continue;
 		}
 
@@ -607,19 +618,12 @@ kernel_physical_mapping_init(unsigned long start,
 #ifndef CONFIG_NUMA
 void __init initmem_init(void)
 {
-	memblock_x86_register_active_regions(0, 0, max_pfn);
+	memblock_set_node(0, (phys_addr_t)ULLONG_MAX, 0);
 }
 #endif
 
 void __init paging_init(void)
 {
-	unsigned long max_zone_pfns[MAX_NR_ZONES];
-
-	memset(max_zone_pfns, 0, sizeof(max_zone_pfns));
-	max_zone_pfns[ZONE_DMA] = MAX_DMA_PFN;
-	max_zone_pfns[ZONE_DMA32] = MAX_DMA32_PFN;
-	max_zone_pfns[ZONE_NORMAL] = max_pfn;
-
 	sparse_memory_present_with_active_regions(MAX_NUMNODES);
 	sparse_init();
 
@@ -631,7 +635,7 @@ void __init paging_init(void)
 	 */
 	node_clear_state(0, N_NORMAL_MEMORY);
 
-	free_area_init_nodes(max_zone_pfns);
+	zone_sizes_init();
 }
 
 /*
@@ -678,14 +682,6 @@ int arch_add_memory(int nid, u64 start, u64 size)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(arch_add_memory);
-
-#if !defined(CONFIG_ACPI_NUMA) && defined(CONFIG_NUMA)
-int memory_add_physaddr_to_nid(u64 start)
-{
-	return 0;
-}
-EXPORT_SYMBOL_GPL(memory_add_physaddr_to_nid);
-#endif
 
 #endif /* CONFIG_MEMORY_HOTPLUG */
 
@@ -901,8 +897,6 @@ const char *arch_vma_name(struct vm_area_struct *vma)
 }
 
 #ifdef CONFIG_X86_UV
-#define MIN_MEMORY_BLOCK_SIZE   (1 << SECTION_SIZE_BITS)
-
 unsigned long memory_block_size_bytes(void)
 {
 	if (is_uv_system()) {
@@ -980,6 +974,9 @@ vmemmap_populate(struct page *start_page, unsigned long size, int node)
 					node_start = node;
 					p_start = p;
 				}
+
+				l4lx_memory_map_virtual_range(addr, PMD_SIZE, __pa(p), 1);
+				// also register virtual mem...
 
 				addr_end = addr + PMD_SIZE;
 				p_end = p + PMD_SIZE;

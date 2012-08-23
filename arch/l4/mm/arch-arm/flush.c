@@ -16,23 +16,19 @@
 #include <asm/cachetype.h>
 #include <asm/highmem.h>
 #include <asm/smp_plat.h>
-#include <asm/system.h>
 #include <asm/tlbflush.h>
 
 #include "mm.h"
 
 #ifdef CONFIG_CPU_CACHE_VIPT
 
-#define ALIAS_FLUSH_START	0xffff4000
-
 #ifdef NOT_FOR_L4
 static void flush_pfn_alias(unsigned long pfn, unsigned long vaddr)
 {
-	unsigned long to = ALIAS_FLUSH_START + (CACHE_COLOUR(vaddr) << PAGE_SHIFT);
+	unsigned long to = FLUSH_ALIAS_START + (CACHE_COLOUR(vaddr) << PAGE_SHIFT);
 	const int zero = 0;
 
-	set_pte_ext(TOP_PTE(to), pfn_pte(pfn, PAGE_KERNEL), 0);
-	flush_tlb_kernel_page(to);
+	set_top_pte(to, pfn_pte(pfn, PAGE_KERNEL));
 
 	asm(	"mcrr	p15, 0, %1, %0, c14\n"
 	"	mcr	p15, 0, %2, c7, c10, 4"
@@ -45,13 +41,12 @@ static void flush_pfn_alias(unsigned long pfn, unsigned long vaddr)
 #ifdef NOT_FOR_L4
 static void flush_icache_alias(unsigned long pfn, unsigned long vaddr, unsigned long len)
 {
-	unsigned long colour = CACHE_COLOUR(vaddr);
+	unsigned long va = FLUSH_ALIAS_START + (CACHE_COLOUR(vaddr) << PAGE_SHIFT);
 	unsigned long offset = vaddr & (PAGE_SIZE - 1);
 	unsigned long to;
 
-	set_pte_ext(TOP_PTE(ALIAS_FLUSH_START) + colour, pfn_pte(pfn, PAGE_KERNEL), 0);
-	to = ALIAS_FLUSH_START + (colour << PAGE_SHIFT) + offset;
-	flush_tlb_kernel_page(to);
+	set_top_pte(va, pfn_pte(pfn, PAGE_KERNEL));
+	to = va + offset;
 	flush_icache_range(to, to + len);
 }
 #endif
@@ -274,8 +269,8 @@ void __sync_icache_dcache(pte_t pteval)
 
 	if (!test_and_set_bit(PG_dcache_clean, &page->flags))
 		__flush_dcache_page(mapping, page);
-	/* pte_exec() already checked above for non-aliasing VIPT cache */
-	if (cache_is_vipt_nonaliasing() || pte_exec(pteval))
+
+	if (pte_exec(pteval))
 		__flush_icache_all();
 #endif
 }
@@ -297,7 +292,8 @@ void __sync_icache_dcache(pte_t pteval)
  *  kernel cache lines for later.  Otherwise, we assume we have
  *  aliasing mappings.
  *
- * Note that we disable the lazy flush for SMP.
+ * Note that we disable the lazy flush for SMP configurations where
+ * the cache maintenance operations are not automatically broadcasted.
  */
 void flush_dcache_page(struct page *page)
 {

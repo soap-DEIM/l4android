@@ -40,7 +40,6 @@
 #include <linux/string.h>
 #include <linux/types.h>
 #include <linux/uaccess.h>
-#include <asm/system.h>
 
 #include <media/media-devnode.h>
 
@@ -213,14 +212,14 @@ int __must_check media_devnode_register(struct media_devnode *mdev)
 
 	/* Part 1: Find a free minor number */
 	mutex_lock(&media_devnode_lock);
-	minor = find_next_zero_bit(media_devnode_nums, 0, MEDIA_NUM_DEVICES);
+	minor = find_next_zero_bit(media_devnode_nums, MEDIA_NUM_DEVICES, 0);
 	if (minor == MEDIA_NUM_DEVICES) {
 		mutex_unlock(&media_devnode_lock);
 		printk(KERN_ERR "could not get a free minor\n");
 		return -ENFILE;
 	}
 
-	set_bit(mdev->minor, media_devnode_nums);
+	set_bit(minor, media_devnode_nums);
 	mutex_unlock(&media_devnode_lock);
 
 	mdev->minor = minor;
@@ -312,7 +311,7 @@ static void __exit media_devnode_exit(void)
 	unregister_chrdev_region(media_dev_t, MEDIA_NUM_DEVICES);
 }
 
-module_init(media_devnode_init)
+subsys_initcall(media_devnode_init);
 module_exit(media_devnode_exit)
 
 MODULE_AUTHOR("Laurent Pinchart <laurent.pinchart@ideasonboard.com>");

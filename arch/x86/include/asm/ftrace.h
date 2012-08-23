@@ -34,15 +34,15 @@
 
 #ifndef __ASSEMBLY__
 extern void mcount(void);
+extern atomic_t modifying_ftrace_code;
 
 static inline unsigned long ftrace_call_adjust(unsigned long addr)
 {
 	/*
-	 * call mcount is "e8 <4 byte offset>"
-	 * The addr points to the 4 byte offset and the caller of this
-	 * function wants the pointer to e8. Simply subtract one.
+	 * addr is the address of the mcount call instruction.
+	 * recordmcount does the necessary offset calculation.
 	 */
-	return addr - 1;
+	return addr;
 }
 
 #ifdef CONFIG_DYNAMIC_FTRACE
@@ -50,6 +50,8 @@ static inline unsigned long ftrace_call_adjust(unsigned long addr)
 struct dyn_arch_ftrace {
 	/* No extra data needed for x86 */
 };
+
+int ftrace_int3_handler(struct pt_regs *regs);
 
 #endif /*  CONFIG_DYNAMIC_FTRACE */
 #endif /* __ASSEMBLY__ */

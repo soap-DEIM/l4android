@@ -455,7 +455,7 @@ __SYSCALL(203, sys_reboot, 3)
 #define __NR_quotactl 				204
 __SYSCALL(204, sys_quotactl, 4)
 #define __NR_nfsservctl 			205
-__SYSCALL(205, sys_nfsservctl, 3)
+__SYSCALL(205, sys_ni_syscall, 0)
 #define __NR__sysctl 				206
 __SYSCALL(206, sys_sysctl, 1)
 #define __NR_bdflush 				207
@@ -507,7 +507,7 @@ __SYSCALL(229, sys_rt_sigtimedwait, 4)
 #define __NR_rt_sigqueueinfo 			230
 __SYSCALL(230, sys_rt_sigqueueinfo, 3)
 #define __NR_rt_sigsuspend 			231
-__SYSCALL(231, xtensa_rt_sigsuspend, 2)
+__SYSCALL(231, sys_rt_sigsuspend, 2)
 
 /* Message */
 
@@ -683,8 +683,10 @@ __SYSCALL(305, sys_ni_syscall, 0)
 __SYSCALL(306, sys_eventfd, 1)
 #define __NR_recvmmsg				307
 __SYSCALL(307, sys_recvmmsg, 5)
+#define __NR_setns				308
+__SYSCALL(308, sys_setns, 2)
 
-#define __NR_syscall_count			308
+#define __NR_syscall_count			309
 
 /*
  * sysxtensa syscall handler

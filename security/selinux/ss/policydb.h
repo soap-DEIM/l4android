@@ -60,6 +60,20 @@ struct class_datum {
 	struct symtab permissions;	/* class-specific permission symbol table */
 	struct constraint_node *constraints;	/* constraints on class permissions */
 	struct constraint_node *validatetrans;	/* special transition rules */
+/* Options how a new object user, role, and type should be decided */
+#define DEFAULT_SOURCE         1
+#define DEFAULT_TARGET         2
+	char default_user;
+	char default_role;
+	char default_type;
+/* Options how a new object range should be decided */
+#define DEFAULT_SOURCE_LOW     1
+#define DEFAULT_SOURCE_HIGH    2
+#define DEFAULT_SOURCE_LOW_HIGH        3
+#define DEFAULT_TARGET_LOW     4
+#define DEFAULT_TARGET_HIGH    5
+#define DEFAULT_TARGET_LOW_HIGH        6
+	char default_range;
 };
 
 /* Role attributes */
@@ -72,17 +86,20 @@ struct role_datum {
 
 struct role_trans {
 	u32 role;		/* current role */
-	u32 type;		/* program executable type */
+	u32 type;		/* program executable type, or new object type */
+	u32 tclass;		/* process class, or new object class */
 	u32 new_role;		/* new role */
 	struct role_trans *next;
 };
 
 struct filename_trans {
-	struct filename_trans *next;
 	u32 stype;		/* current process */
 	u32 ttype;		/* parent dir context */
 	u16 tclass;		/* class of new object */
 	const char *name;	/* last path component */
+};
+
+struct filename_trans_datum {
 	u32 otype;		/* expected of new object */
 };
 
@@ -227,7 +244,10 @@ struct policydb {
 	struct role_trans *role_tr;
 
 	/* file transitions with the last path component */
-	struct filename_trans *filename_trans;
+	/* quickly exclude lookups when parent ttype has no rules */
+	struct ebitmap filename_trans_ttypes;
+	/* actual set of filename_trans rules */
+	struct hashtab *filename_trans;
 
 	/* bools indexed by (value - 1) */
 	struct cond_bool_datum **bool_val_to_struct;

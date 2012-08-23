@@ -827,6 +827,14 @@ static inline bool addr_match(const void *token1, const void *token2,
 	return true;
 }
 
+static inline bool addr4_match(__be32 a1, __be32 a2, u8 prefixlen)
+{
+	/* C99 6.5.7 (3): u32 << 32 is undefined behaviour */
+	if (prefixlen == 0)
+		return true;
+	return !((a1 ^ a2) & htonl(0xFFFFFFFFu << (32 - prefixlen)));
+}
+
 static __inline__
 __be16 xfrm_flowi_sport(const struct flowi *fl, const union flowi_uli *uli)
 {
@@ -878,15 +886,15 @@ __be16 xfrm_flowi_dport(const struct flowi *fl, const union flowi_uli *uli)
 	return port;
 }
 
-extern int xfrm_selector_match(const struct xfrm_selector *sel,
-			       const struct flowi *fl,
-			       unsigned short family);
+extern bool xfrm_selector_match(const struct xfrm_selector *sel,
+				const struct flowi *fl,
+				unsigned short family);
 
 #ifdef CONFIG_SECURITY_NETWORK_XFRM
 /*	If neither has a context --> match
  * 	Otherwise, both must have a context and the sids, doi, alg must match
  */
-static inline int xfrm_sec_ctx_match(struct xfrm_sec_ctx *s1, struct xfrm_sec_ctx *s2)
+static inline bool xfrm_sec_ctx_match(struct xfrm_sec_ctx *s1, struct xfrm_sec_ctx *s2)
 {
 	return ((!s1 && !s2) ||
 		(s1 && s2 &&
@@ -895,9 +903,9 @@ static inline int xfrm_sec_ctx_match(struct xfrm_sec_ctx *s1, struct xfrm_sec_ct
 		 (s1->ctx_alg == s2->ctx_alg)));
 }
 #else
-static inline int xfrm_sec_ctx_match(struct xfrm_sec_ctx *s1, struct xfrm_sec_ctx *s2)
+static inline bool xfrm_sec_ctx_match(struct xfrm_sec_ctx *s1, struct xfrm_sec_ctx *s2)
 {
-	return 1;
+	return true;
 }
 #endif
 
@@ -957,6 +965,15 @@ struct sec_path {
 	int			len;
 	struct xfrm_state	*xvec[XFRM_MAX_DEPTH];
 };
+
+static inline int secpath_exists(struct sk_buff *skb)
+{
+#ifdef CONFIG_XFRM
+	return skb->sp != NULL;
+#else
+	return 0;
+#endif
+}
 
 static inline struct sec_path *
 secpath_get(struct sec_path *sp)
@@ -1200,8 +1217,8 @@ void xfrm_flowi_addr_get(const struct flowi *fl,
 		memcpy(&daddr->a4, &fl->u.ip4.daddr, sizeof(daddr->a4));
 		break;
 	case AF_INET6:
-		ipv6_addr_copy((struct in6_addr *)&saddr->a6, &fl->u.ip6.saddr);
-		ipv6_addr_copy((struct in6_addr *)&daddr->a6, &fl->u.ip6.daddr);
+		*(struct in6_addr *)saddr->a6 = fl->u.ip6.saddr;
+		*(struct in6_addr *)daddr->a6 = fl->u.ip6.daddr;
 		break;
 	}
 }
@@ -1468,7 +1485,7 @@ extern int xfrm6_input_addr(struct sk_buff *skb, xfrm_address_t *daddr,
 extern int xfrm6_tunnel_register(struct xfrm6_tunnel *handler, unsigned short family);
 extern int xfrm6_tunnel_deregister(struct xfrm6_tunnel *handler, unsigned short family);
 extern __be32 xfrm6_tunnel_alloc_spi(struct net *net, xfrm_address_t *saddr);
-extern __be32 xfrm6_tunnel_spi_lookup(struct net *net, xfrm_address_t *saddr);
+extern __be32 xfrm6_tunnel_spi_lookup(struct net *net, const xfrm_address_t *saddr);
 extern int xfrm6_extract_output(struct xfrm_state *x, struct sk_buff *skb);
 extern int xfrm6_prepare_output(struct xfrm_state *x, struct sk_buff *skb);
 extern int xfrm6_output(struct sk_buff *skb);
@@ -1549,11 +1566,6 @@ extern struct xfrm_algo_desc *xfrm_calg_get_byname(const char *name, int probe);
 extern struct xfrm_algo_desc *xfrm_aead_get_byname(const char *name, int icv_len,
 						   int probe);
 
-struct hash_desc;
-struct scatterlist;
-typedef int (icv_update_fn_t)(struct hash_desc *, struct scatterlist *,
-			      unsigned int);
-
 static inline int xfrm_addr_cmp(const xfrm_address_t *a,
 				const xfrm_address_t *b,
 				int family)
@@ -1563,8 +1575,8 @@ static inline int xfrm_addr_cmp(const xfrm_address_t *a,
 	case AF_INET:
 		return (__force u32)a->a4 - (__force u32)b->a4;
 	case AF_INET6:
-		return ipv6_addr_cmp((struct in6_addr *)a,
-				     (struct in6_addr *)b);
+		return ipv6_addr_cmp((const struct in6_addr *)a,
+				     (const struct in6_addr *)b);
 	}
 }
 
@@ -1670,8 +1682,9 @@ static inline int xfrm_mark_get(struct nlattr **attrs, struct xfrm_mark *m)
 
 static inline int xfrm_mark_put(struct sk_buff *skb, const struct xfrm_mark *m)
 {
-	if (m->m | m->v)
-		NLA_PUT(skb, XFRMA_MARK, sizeof(struct xfrm_mark), m);
+	if ((m->m | m->v) &&
+	    nla_put(skb, XFRMA_MARK, sizeof(struct xfrm_mark), m))
+		goto nla_put_failure;
 	return 0;
 
 nla_put_failure:

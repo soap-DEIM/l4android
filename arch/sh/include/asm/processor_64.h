@@ -121,7 +121,6 @@ struct thread_struct {
 	   NULL for a kernel thread. */
 	struct pt_regs *uregs;
 
-	unsigned long trap_no, error_code;
 	unsigned long address;
 	/* Hardware debugging registers may come here */
 
@@ -138,8 +137,6 @@ struct thread_struct {
 	.pc		= 0,			\
         .kregs		= &fake_swapper_regs,	\
 	.uregs	        = NULL,			\
-	.trap_no	= 0,			\
-	.error_code	= 0,			\
 	.address	= 0,			\
 	.flags		= 0,			\
 }
@@ -150,7 +147,6 @@ struct thread_struct {
 #define SR_USER (SR_MMU | SR_FD)
 
 #define start_thread(_regs, new_pc, new_sp)			\
-	set_fs(USER_DS);					\
 	_regs->sr = SR_USER;	/* User mode. */		\
 	_regs->pc = new_pc - 4;	/* Compensate syscall exit */	\
 	_regs->pc |= 1;		/* Set SHmedia ! */		\
@@ -173,7 +169,6 @@ extern int kernel_thread(int (*fn)(void *), void * arg, unsigned long flags);
 #define copy_segments(p, mm)	do { } while (0)
 #define release_segments(mm)	do { } while (0)
 #define forget_segments()	do { } while (0)
-#define prepare_to_copy(tsk)	do { } while (0)
 /*
  * FPU lazy state save handling.
  */

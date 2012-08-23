@@ -2,7 +2,7 @@
  *
  *	Added conditional policy language extensions
  *
- *  Updated: Hewlett-Packard <paul.moore@hp.com>
+ *  Updated: Hewlett-Packard <paul@paul-moore.com>
  *
  *	Added support for the policy capability bitmap
  *
@@ -28,6 +28,8 @@
 #include <linux/percpu.h>
 #include <linux/audit.h>
 #include <linux/uaccess.h>
+#include <linux/kobject.h>
+#include <linux/ctype.h>
 
 /* selinuxfs pseudo filesystem for exporting the security policy API.
    Based on the proc code and the fs/nfsd/nfsctl.c code. */
@@ -72,8 +74,6 @@ static char policy_opened;
 
 /* global data for policy capabilities */
 static struct dentry *policycap_dir;
-
-extern void selnl_notify_setenforce(int val);
 
 /* Check whether a task is allowed to use a security operation. */
 static int task_has_security(struct task_struct *tsk,
@@ -276,11 +276,10 @@ static ssize_t sel_write_disable(struct file *file, const char __user *buf,
 	char *page = NULL;
 	ssize_t length;
 	int new_value;
-	extern int selinux_disable(void);
 
 	length = -ENOMEM;
 	if (count >= PAGE_SIZE)
-		goto out;;
+		goto out;
 
 	/* No partial writes. */
 	length = -EINVAL;
@@ -345,7 +344,7 @@ static int sel_make_classes(void);
 static int sel_make_policycap(void);
 
 /* declaration for sel_make_class_dirs */
-static int sel_make_dir(struct inode *dir, struct dentry *dentry,
+static struct dentry *sel_make_dir(struct dentry *dir, const char *name,
 			unsigned long *ino);
 
 static ssize_t sel_read_mls(struct file *filp, char __user *buf,
@@ -476,7 +475,7 @@ static struct vm_operations_struct sel_mmap_policy_ops = {
 	.page_mkwrite = sel_mmap_policy_fault,
 };
 
-int sel_mmap_policy(struct file *filp, struct vm_area_struct *vma)
+static int sel_mmap_policy(struct file *filp, struct vm_area_struct *vma)
 {
 	if (vma->vm_flags & VM_SHARED) {
 		/* do not allow mprotect to make mapping writable */
@@ -497,6 +496,7 @@ static const struct file_operations sel_policy_ops = {
 	.read		= sel_read_policy,
 	.mmap		= sel_mmap_policy,
 	.release	= sel_release_policy,
+	.llseek		= generic_file_llseek,
 };
 
 static ssize_t sel_write_load(struct file *file, const char __user *buf,
@@ -753,11 +753,13 @@ out:
 static ssize_t sel_write_create(struct file *file, char *buf, size_t size)
 {
 	char *scon = NULL, *tcon = NULL;
+	char *namebuf = NULL, *objname = NULL;
 	u32 ssid, tsid, newsid;
 	u16 tclass;
 	ssize_t length;
 	char *newcon = NULL;
 	u32 len;
+	int nargs;
 
 	length = task_has_security(current, SECURITY__COMPUTE_CREATE);
 	if (length)
@@ -773,9 +775,45 @@ static ssize_t sel_write_create(struct file *file, char *buf, size_t size)
 	if (!tcon)
 		goto out;
 
-	length = -EINVAL;
-	if (sscanf(buf, "%s %s %hu", scon, tcon, &tclass) != 3)
+	length = -ENOMEM;
+	namebuf = kzalloc(size + 1, GFP_KERNEL);
+	if (!namebuf)
 		goto out;
+
+	length = -EINVAL;
+	nargs = sscanf(buf, "%s %s %hu %s", scon, tcon, &tclass, namebuf);
+	if (nargs < 3 || nargs > 4)
+		goto out;
+	if (nargs == 4) {
+		/*
+		 * If and when the name of new object to be queried contains
+		 * either whitespace or multibyte characters, they shall be
+		 * encoded based on the percentage-encoding rule.
+		 * If not encoded, the sscanf logic picks up only left-half
+		 * of the supplied name; splitted by a whitespace unexpectedly.
+		 */
+		char   *r, *w;
+		int     c1, c2;
+
+		r = w = namebuf;
+		do {
+			c1 = *r++;
+			if (c1 == '+')
+				c1 = ' ';
+			else if (c1 == '%') {
+				c1 = hex_to_bin(*r++);
+				if (c1 < 0)
+					goto out;
+				c2 = hex_to_bin(*r++);
+				if (c2 < 0)
+					goto out;
+				c1 = (c1 << 4) | c2;
+			}
+			*w++ = c1;
+		} while (c1 != '\0');
+
+		objname = namebuf;
+	}
 
 	length = security_context_to_sid(scon, strlen(scon) + 1, &ssid);
 	if (length)
@@ -785,7 +823,8 @@ static ssize_t sel_write_create(struct file *file, char *buf, size_t size)
 	if (length)
 		goto out;
 
-	length = security_transition_sid_user(ssid, tsid, tclass, &newsid);
+	length = security_transition_sid_user(ssid, tsid, tclass,
+					      objname, &newsid);
 	if (length)
 		goto out;
 
@@ -804,6 +843,7 @@ static ssize_t sel_write_create(struct file *file, char *buf, size_t size)
 	length = len;
 out:
 	kfree(newcon);
+	kfree(namebuf);
 	kfree(tcon);
 	kfree(scon);
 	return length;
@@ -876,12 +916,12 @@ static ssize_t sel_write_user(struct file *file, char *buf, size_t size)
 
 	length = task_has_security(current, SECURITY__COMPUTE_USER);
 	if (length)
-		goto out;;
+		goto out;
 
 	length = -ENOMEM;
 	con = kzalloc(size + 1, GFP_KERNEL);
 	if (!con)
-		goto out;;
+		goto out;
 
 	length = -ENOMEM;
 	user = kzalloc(size + 1, GFP_KERNEL);
@@ -941,7 +981,7 @@ static ssize_t sel_write_member(struct file *file, char *buf, size_t size)
 	length = -ENOMEM;
 	scon = kzalloc(size + 1, GFP_KERNEL);
 	if (!scon)
-		goto out;;
+		goto out;
 
 	length = -ENOMEM;
 	tcon = kzalloc(size + 1, GFP_KERNEL);
@@ -1193,6 +1233,7 @@ static int sel_make_bools(void)
 		kfree(bool_pending_names[i]);
 	kfree(bool_pending_names);
 	kfree(bool_pending_values);
+	bool_num = 0;
 	bool_pending_names = NULL;
 	bool_pending_values = NULL;
 
@@ -1218,12 +1259,8 @@ static int sel_make_bools(void)
 		if (!inode)
 			goto out;
 
-		ret = -EINVAL;
-		len = snprintf(page, PAGE_SIZE, "/%s/%s", BOOL_DIR_NAME, names[i]);
-		if (len < 0)
-			goto out;
-
 		ret = -ENAMETOOLONG;
+		len = snprintf(page, PAGE_SIZE, "/%s/%s", BOOL_DIR_NAME, names[i]);
 		if (len >= PAGE_SIZE)
 			goto out;
 
@@ -1380,10 +1417,14 @@ static int sel_avc_stats_seq_show(struct seq_file *seq, void *v)
 	if (v == SEQ_START_TOKEN)
 		seq_printf(seq, "lookups hits misses allocations reclaims "
 			   "frees\n");
-	else
-		seq_printf(seq, "%u %u %u %u %u %u\n", st->lookups,
-			   st->hits, st->misses, st->allocations,
+	else {
+		unsigned int lookups = st->lookups;
+		unsigned int misses = st->misses;
+		unsigned int hits = lookups - misses;
+		seq_printf(seq, "%u %u %u %u %u %u\n", lookups,
+			   hits, misses, st->allocations,
 			   st->reclaims, st->frees);
+	}
 	return 0;
 }
 
@@ -1489,11 +1530,6 @@ static int sel_make_initcon_files(struct dentry *dir)
 	return 0;
 }
 
-static inline unsigned int sel_div(unsigned long a, unsigned long b)
-{
-	return a / b - (a % b < 0);
-}
-
 static inline unsigned long sel_class_to_ino(u16 class)
 {
 	return (class * (SEL_VEC_MAX + 1)) | SEL_CLASS_INO_OFFSET;
@@ -1501,7 +1537,7 @@ static inline unsigned long sel_class_to_ino(u16 class)
 
 static inline u16 sel_ino_to_class(unsigned long ino)
 {
-	return sel_div(ino & SEL_INO_MASK, SEL_VEC_MAX + 1);
+	return (ino & SEL_INO_MASK) / (SEL_VEC_MAX + 1);
 }
 
 static inline unsigned long sel_perm_to_ino(u16 class, u32 perm)
@@ -1517,19 +1553,10 @@ static inline u32 sel_ino_to_perm(unsigned long ino)
 static ssize_t sel_read_class(struct file *file, char __user *buf,
 				size_t count, loff_t *ppos)
 {
-	ssize_t rc, len;
-	char *page;
 	unsigned long ino = file->f_path.dentry->d_inode->i_ino;
-
-	page = (char *)__get_free_page(GFP_KERNEL);
-	if (!page)
-		return -ENOMEM;
-
-	len = snprintf(page, PAGE_SIZE, "%d", sel_ino_to_class(ino));
-	rc = simple_read_from_buffer(buf, count, ppos, page, len);
-	free_page((unsigned long)page);
-
-	return rc;
+	char res[TMPBUFLEN];
+	ssize_t len = snprintf(res, sizeof(res), "%d", sel_ino_to_class(ino));
+	return simple_read_from_buffer(buf, count, ppos, res, len);
 }
 
 static const struct file_operations sel_class_ops = {
@@ -1540,19 +1567,10 @@ static const struct file_operations sel_class_ops = {
 static ssize_t sel_read_perm(struct file *file, char __user *buf,
 				size_t count, loff_t *ppos)
 {
-	ssize_t rc, len;
-	char *page;
 	unsigned long ino = file->f_path.dentry->d_inode->i_ino;
-
-	page = (char *)__get_free_page(GFP_KERNEL);
-	if (!page)
-		return -ENOMEM;
-
-	len = snprintf(page, PAGE_SIZE, "%d", sel_ino_to_perm(ino));
-	rc = simple_read_from_buffer(buf, count, ppos, page, len);
-	free_page((unsigned long)page);
-
-	return rc;
+	char res[TMPBUFLEN];
+	ssize_t len = snprintf(res, sizeof(res), "%d", sel_ino_to_perm(ino));
+	return simple_read_from_buffer(buf, count, ppos, res, len);
 }
 
 static const struct file_operations sel_perm_ops = {
@@ -1635,13 +1653,9 @@ static int sel_make_class_dir_entries(char *classname, int index,
 	inode->i_ino = sel_class_to_ino(index);
 	d_add(dentry, inode);
 
-	dentry = d_alloc_name(dir, "perms");
-	if (!dentry)
-		return -ENOMEM;
-
-	rc = sel_make_dir(dir->d_inode, dentry, &last_class_ino);
-	if (rc)
-		return rc;
+	dentry = sel_make_dir(dir, "perms", &last_class_ino);
+	if (IS_ERR(dentry))
+		return PTR_ERR(dentry);
 
 	rc = sel_make_perm_files(classname, index, dentry);
 
@@ -1690,15 +1704,12 @@ static int sel_make_classes(void)
 	for (i = 0; i < nclasses; i++) {
 		struct dentry *class_name_dir;
 
-		rc = -ENOMEM;
-		class_name_dir = d_alloc_name(class_dir, classes[i]);
-		if (!class_name_dir)
-			goto out;
-
-		rc = sel_make_dir(class_dir->d_inode, class_name_dir,
+		class_name_dir = sel_make_dir(class_dir, classes[i],
 				&last_class_ino);
-		if (rc)
+		if (IS_ERR(class_name_dir)) {
+			rc = PTR_ERR(class_name_dir);
 			goto out;
+		}
 
 		/* i+1 since class values are 1-indexed */
 		rc = sel_make_class_dir_entries(classes[i], i + 1,
@@ -1744,14 +1755,20 @@ static int sel_make_policycap(void)
 	return 0;
 }
 
-static int sel_make_dir(struct inode *dir, struct dentry *dentry,
+static struct dentry *sel_make_dir(struct dentry *dir, const char *name,
 			unsigned long *ino)
 {
+	struct dentry *dentry = d_alloc_name(dir, name);
 	struct inode *inode;
 
-	inode = sel_make_inode(dir->i_sb, S_IFDIR | S_IRUGO | S_IXUGO);
-	if (!inode)
-		return -ENOMEM;
+	if (!dentry)
+		return ERR_PTR(-ENOMEM);
+
+	inode = sel_make_inode(dir->d_sb, S_IFDIR | S_IRUGO | S_IXUGO);
+	if (!inode) {
+		dput(dentry);
+		return ERR_PTR(-ENOMEM);
+	}
 
 	inode->i_op = &simple_dir_inode_operations;
 	inode->i_fop = &simple_dir_operations;
@@ -1760,16 +1777,16 @@ static int sel_make_dir(struct inode *dir, struct dentry *dentry,
 	inc_nlink(inode);
 	d_add(dentry, inode);
 	/* bump link count on parent directory, too */
-	inc_nlink(dir);
+	inc_nlink(dir->d_inode);
 
-	return 0;
+	return dentry;
 }
 
 static int sel_fill_super(struct super_block *sb, void *data, int silent)
 {
 	int ret;
 	struct dentry *dentry;
-	struct inode *inode, *root_inode;
+	struct inode *inode;
 	struct inode_security_struct *isec;
 
 	static struct tree_descr selinux_files[] = {
@@ -1789,25 +1806,19 @@ static int sel_fill_super(struct super_block *sb, void *data, int silent)
 		[SEL_REJECT_UNKNOWN] = {"reject_unknown", &sel_handle_unknown_ops, S_IRUGO},
 		[SEL_DENY_UNKNOWN] = {"deny_unknown", &sel_handle_unknown_ops, S_IRUGO},
 		[SEL_STATUS] = {"status", &sel_handle_status_ops, S_IRUGO},
-		[SEL_POLICY] = {"policy", &sel_policy_ops, S_IRUSR},
+		[SEL_POLICY] = {"policy", &sel_policy_ops, S_IRUGO},
 		/* last one */ {""}
 	};
 	ret = simple_fill_super(sb, SELINUX_MAGIC, selinux_files);
 	if (ret)
 		goto err;
 
-	root_inode = sb->s_root->d_inode;
-
-	ret = -ENOMEM;
-	dentry = d_alloc_name(sb->s_root, BOOL_DIR_NAME);
-	if (!dentry)
+	bool_dir = sel_make_dir(sb->s_root, BOOL_DIR_NAME, &sel_last_ino);
+	if (IS_ERR(bool_dir)) {
+		ret = PTR_ERR(bool_dir);
+		bool_dir = NULL;
 		goto err;
-
-	ret = sel_make_dir(root_inode, dentry, &sel_last_ino);
-	if (ret)
-		goto err;
-
-	bool_dir = dentry;
+	}
 
 	ret = -ENOMEM;
 	dentry = d_alloc_name(sb->s_root, NULL_FILE_NAME);
@@ -1829,54 +1840,39 @@ static int sel_fill_super(struct super_block *sb, void *data, int silent)
 	d_add(dentry, inode);
 	selinux_null = dentry;
 
-	ret = -ENOMEM;
-	dentry = d_alloc_name(sb->s_root, "avc");
-	if (!dentry)
+	dentry = sel_make_dir(sb->s_root, "avc", &sel_last_ino);
+	if (IS_ERR(dentry)) {
+		ret = PTR_ERR(dentry);
 		goto err;
-
-	ret = sel_make_dir(root_inode, dentry, &sel_last_ino);
-	if (ret)
-		goto err;
+	}
 
 	ret = sel_make_avc_files(dentry);
 	if (ret)
 		goto err;
 
-	ret = -ENOMEM;
-	dentry = d_alloc_name(sb->s_root, "initial_contexts");
-	if (!dentry)
+	dentry = sel_make_dir(sb->s_root, "initial_contexts", &sel_last_ino);
+	if (IS_ERR(dentry)) {
+		ret = PTR_ERR(dentry);
 		goto err;
-
-	ret = sel_make_dir(root_inode, dentry, &sel_last_ino);
-	if (ret)
-		goto err;
+	}
 
 	ret = sel_make_initcon_files(dentry);
 	if (ret)
 		goto err;
 
-	ret = -ENOMEM;
-	dentry = d_alloc_name(sb->s_root, "class");
-	if (!dentry)
+	class_dir = sel_make_dir(sb->s_root, "class", &sel_last_ino);
+	if (IS_ERR(class_dir)) {
+		ret = PTR_ERR(class_dir);
+		class_dir = NULL;
 		goto err;
+	}
 
-	ret = sel_make_dir(root_inode, dentry, &sel_last_ino);
-	if (ret)
+	policycap_dir = sel_make_dir(sb->s_root, "policy_capabilities", &sel_last_ino);
+	if (IS_ERR(policycap_dir)) {
+		ret = PTR_ERR(policycap_dir);
+		policycap_dir = NULL;
 		goto err;
-
-	class_dir = dentry;
-
-	ret = -ENOMEM;
-	dentry = d_alloc_name(sb->s_root, "policy_capabilities");
-	if (!dentry)
-		goto err;
-
-	ret = sel_make_dir(root_inode, dentry, &sel_last_ino);
-	if (ret)
-		goto err;
-
-	policycap_dir = dentry;
-
+	}
 	return 0;
 err:
 	printk(KERN_ERR "SELinux: %s:  failed while creating inodes\n",
@@ -1897,6 +1893,7 @@ static struct file_system_type sel_fs_type = {
 };
 
 struct vfsmount *selinuxfs_mount;
+static struct kobject *selinuxfs_kobj;
 
 static int __init init_sel_fs(void)
 {
@@ -1904,9 +1901,16 @@ static int __init init_sel_fs(void)
 
 	if (!selinux_enabled)
 		return 0;
+
+	selinuxfs_kobj = kobject_create_and_add("selinux", fs_kobj);
+	if (!selinuxfs_kobj)
+		return -ENOMEM;
+
 	err = register_filesystem(&sel_fs_type);
-	if (err)
+	if (err) {
+		kobject_put(selinuxfs_kobj);
 		return err;
+	}
 
 	selinuxfs_mount = kern_mount(&sel_fs_type);
 	if (IS_ERR(selinuxfs_mount)) {
@@ -1923,6 +1927,8 @@ __initcall(init_sel_fs);
 #ifdef CONFIG_SECURITY_SELINUX_DISABLE
 void exit_sel_fs(void)
 {
+	kobject_put(selinuxfs_kobj);
+	kern_unmount(selinuxfs_mount);
 	unregister_filesystem(&sel_fs_type);
 }
 #endif

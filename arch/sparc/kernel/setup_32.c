@@ -31,8 +31,9 @@
 #include <linux/root_dev.h>
 #include <linux/cpu.h>
 #include <linux/kdebug.h>
+#include <linux/export.h>
+#include <linux/start_kernel.h>
 
-#include <asm/system.h>
 #include <asm/io.h>
 #include <asm/processor.h>
 #include <asm/oplib.h>
@@ -42,9 +43,10 @@
 #include <asm/vaddrs.h>
 #include <asm/mbus.h>
 #include <asm/idprom.h>
-#include <asm/machines.h>
 #include <asm/cpudata.h>
 #include <asm/setup.h>
+#include <asm/cacheflush.h>
+#include <asm/sections.h>
 
 #include "kernel.h"
 
@@ -82,8 +84,8 @@ static void prom_sync_me(void)
 			     "nop\n\t" : : "r" (&trapbase));
 
 	prom_printf("PROM SYNC COMMAND...\n");
-	show_free_areas();
-	if(current->pid != 0) {
+	show_free_areas(0);
+	if (!is_idle_task(current)) {
 		local_irq_enable();
 		sys_sync();
 		local_irq_disable();
@@ -103,16 +105,19 @@ static unsigned int boot_flags __initdata = 0;
 /* Exported for mm/init.c:paging_init. */
 unsigned long cmdline_memory_size __initdata = 0;
 
+/* which CPU booted us (0xff = not set) */
+unsigned char boot_cpu_id = 0xff; /* 0xff will make it into DATA section... */
+
 static void
 prom_console_write(struct console *con, const char *s, unsigned n)
 {
 	prom_write(s, n);
 }
 
-static struct console prom_debug_console = {
-	.name =		"debug",
+static struct console prom_early_console = {
+	.name =		"earlyprom",
 	.write =	prom_console_write,
-	.flags =	CON_PRINTBUFFER,
+	.flags =	CON_PRINTBUFFER | CON_BOOT,
 	.index =	-1,
 };
 
@@ -133,8 +138,7 @@ static void __init process_switch(char c)
 		prom_halt();
 		break;
 	case 'p':
-		/* Use PROM debug console. */
-		register_console(&prom_debug_console);
+		prom_early_console.flags &= ~CON_BOOT;
 		break;
 	default:
 		printk("Unknown boot switch (-%c)\n", c);
@@ -178,13 +182,6 @@ static void __init boot_flags_init(char *commands)
 	}
 }
 
-/* This routine will in the future do all the nasty prom stuff
- * to probe for the mmu type and its parameters, etc. This will
- * also be where SMP things happen.
- */
-
-extern void sun4c_probe_vac(void);
-
 extern unsigned short root_flags;
 extern unsigned short root_dev;
 extern unsigned short ram_flags;
@@ -196,31 +193,91 @@ extern int root_mountflags;
 
 char reboot_command[COMMAND_LINE_SIZE];
 
+struct cpuid_patch_entry {
+	unsigned int	addr;
+	unsigned int	sun4d[3];
+	unsigned int	leon[3];
+};
+extern struct cpuid_patch_entry __cpuid_patch, __cpuid_patch_end;
+
+static void __init per_cpu_patch(void)
+{
+	struct cpuid_patch_entry *p;
+
+	if (sparc_cpu_model == sun4m) {
+		/* Nothing to do, this is what the unpatched code
+		 * targets.
+		 */
+		return;
+	}
+
+	p = &__cpuid_patch;
+	while (p < &__cpuid_patch_end) {
+		unsigned long addr = p->addr;
+		unsigned int *insns;
+
+		switch (sparc_cpu_model) {
+		case sun4d:
+			insns = &p->sun4d[0];
+			break;
+
+		case sparc_leon:
+			insns = &p->leon[0];
+			break;
+		default:
+			prom_printf("Unknown cpu type, halting.\n");
+			prom_halt();
+		}
+		*(unsigned int *) (addr + 0) = insns[0];
+		flushi(addr + 0);
+		*(unsigned int *) (addr + 4) = insns[1];
+		flushi(addr + 4);
+		*(unsigned int *) (addr + 8) = insns[2];
+		flushi(addr + 8);
+
+		p++;
+	}
+}
+
+struct leon_1insn_patch_entry {
+	unsigned int addr;
+	unsigned int insn;
+};
+
 enum sparc_cpu sparc_cpu_model;
 EXPORT_SYMBOL(sparc_cpu_model);
 
-struct tt_entry *sparc_ttable;
+static __init void leon_patch(void)
+{
+	struct leon_1insn_patch_entry *start = (void *)__leon_1insn_patch;
+	struct leon_1insn_patch_entry *end = (void *)__leon_1insn_patch_end;
 
+	/* Default instruction is leon - no patching */
+	if (sparc_cpu_model == sparc_leon)
+		return;
+
+	while (start < end) {
+		unsigned long addr = start->addr;
+
+		*(unsigned int *)(addr) = start->insn;
+		flushi(addr);
+
+		start++;
+	}
+}
+
+struct tt_entry *sparc_ttable;
 struct pt_regs fake_swapper_regs;
 
-void __init setup_arch(char **cmdline_p)
+/* Called from head_32.S - before we have setup anything
+ * in the kernel. Be very careful with what you do here.
+ */
+void __init sparc32_start_kernel(struct linux_romvec *rp)
 {
-	int i;
-	unsigned long highest_paddr;
-
-	sparc_ttable = (struct tt_entry *) &trapbase;
-
-	/* Initialize PROM console and command line. */
-	*cmdline_p = prom_getbootargs();
-	strcpy(boot_command_line, *cmdline_p);
-	parse_early_param();
+	prom_init(rp);
 
 	/* Set sparc_cpu_model */
 	sparc_cpu_model = sun_unknown;
-	if (!strcmp(&cputypval[0], "sun4 "))
-		sparc_cpu_model = sun4;
-	if (!strcmp(&cputypval[0], "sun4c"))
-		sparc_cpu_model = sun4c;
 	if (!strcmp(&cputypval[0], "sun4m"))
 		sparc_cpu_model = sun4m;
 	if (!strcmp(&cputypval[0], "sun4s"))
@@ -234,14 +291,28 @@ void __init setup_arch(char **cmdline_p)
 	if (!strncmp(&cputypval[0], "leon" , 4))
 		sparc_cpu_model = sparc_leon;
 
+	leon_patch();
+	start_kernel();
+}
+
+void __init setup_arch(char **cmdline_p)
+{
+	int i;
+	unsigned long highest_paddr;
+
+	sparc_ttable = (struct tt_entry *) &trapbase;
+
+	/* Initialize PROM console and command line. */
+	*cmdline_p = prom_getbootargs();
+	strcpy(boot_command_line, *cmdline_p);
+	parse_early_param();
+
+	boot_flags_init(*cmdline_p);
+
+	register_console(&prom_early_console);
+
 	printk("ARCH: ");
 	switch(sparc_cpu_model) {
-	case sun4:
-		printk("SUN4\n");
-		break;
-	case sun4c:
-		printk("SUN4C\n");
-		break;
 	case sun4m:
 		printk("SUN4M\n");
 		break;
@@ -260,16 +331,13 @@ void __init setup_arch(char **cmdline_p)
 	default:
 		printk("UNKNOWN!\n");
 		break;
-	};
+	}
 
 #ifdef CONFIG_DUMMY_CONSOLE
 	conswitchp = &dummy_con;
 #endif
-	boot_flags_init(*cmdline_p);
 
 	idprom_init();
-	if (ARCH_SUN4C)
-		sun4c_probe_vac();
 	load_mmu();
 
 	phys_base = 0xffffffffUL;
@@ -306,79 +374,13 @@ void __init setup_arch(char **cmdline_p)
 	init_mm.context = (unsigned long) NO_CONTEXT;
 	init_task.thread.kregs = &fake_swapper_regs;
 
+	/* Run-time patch instructions to match the cpu model */
+	per_cpu_patch();
+
 	paging_init();
 
 	smp_setup_cpu_possible_map();
 }
-
-static int ncpus_probed;
-
-static int show_cpuinfo(struct seq_file *m, void *__unused)
-{
-	seq_printf(m,
-		   "cpu\t\t: %s\n"
-		   "fpu\t\t: %s\n"
-		   "promlib\t\t: Version %d Revision %d\n"
-		   "prom\t\t: %d.%d\n"
-		   "type\t\t: %s\n"
-		   "ncpus probed\t: %d\n"
-		   "ncpus active\t: %d\n"
-#ifndef CONFIG_SMP
-		   "CPU0Bogo\t: %lu.%02lu\n"
-		   "CPU0ClkTck\t: %ld\n"
-#endif
-		   ,
-		   sparc_cpu_type,
-		   sparc_fpu_type ,
-		   romvec->pv_romvers,
-		   prom_rev,
-		   romvec->pv_printrev >> 16,
-		   romvec->pv_printrev & 0xffff,
-		   &cputypval[0],
-		   ncpus_probed,
-		   num_online_cpus()
-#ifndef CONFIG_SMP
-		   , cpu_data(0).udelay_val/(500000/HZ),
-		   (cpu_data(0).udelay_val/(5000/HZ)) % 100,
-		   cpu_data(0).clock_tick
-#endif
-		);
-
-#ifdef CONFIG_SMP
-	smp_bogo(m);
-#endif
-	mmu_info(m);
-#ifdef CONFIG_SMP
-	smp_info(m);
-#endif
-	return 0;
-}
-
-static void *c_start(struct seq_file *m, loff_t *pos)
-{
-	/* The pointer we are returning is arbitrary,
-	 * it just has to be non-NULL and not IS_ERR
-	 * in the success case.
-	 */
-	return *pos == 0 ? &c_start : NULL;
-}
-
-static void *c_next(struct seq_file *m, void *v, loff_t *pos)
-{
-	++*pos;
-	return c_start(m, pos);
-}
-
-static void c_stop(struct seq_file *m, void *v)
-{
-}
-
-const struct seq_operations cpuinfo_op = {
-	.start =c_start,
-	.next =	c_next,
-	.stop =	c_stop,
-	.show =	show_cpuinfo,
-};
 
 extern int stop_a_enabled;
 

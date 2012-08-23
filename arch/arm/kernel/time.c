@@ -11,7 +11,7 @@
  *  This file contains the ARM-specific time handling details:
  *  reading the RTC at bootup, etc...
  */
-#include <linux/module.h>
+#include <linux/export.h>
 #include <linux/kernel.h>
 #include <linux/interrupt.h>
 #include <linux/time.h>
@@ -21,11 +21,9 @@
 #include <linux/timex.h>
 #include <linux/errno.h>
 #include <linux/profile.h>
-#include <linux/sysdev.h>
+#include <linux/syscore_ops.h>
 #include <linux/timer.h>
 #include <linux/irq.h>
-
-#include <linux/mc146818rtc.h>
 
 #include <asm/leds.h>
 #include <asm/thread_info.h>
@@ -39,13 +37,11 @@
  */
 static struct sys_timer *system_timer;
 
-#if defined(CONFIG_RTC_DRV_CMOS) || defined(CONFIG_RTC_DRV_CMOS_MODULE)
+#if defined(CONFIG_RTC_DRV_CMOS) || defined(CONFIG_RTC_DRV_CMOS_MODULE) || \
+    defined(CONFIG_NVRAM) || defined(CONFIG_NVRAM_MODULE)
 /* this needs a better home */
 DEFINE_SPINLOCK(rtc_lock);
-
-#ifdef CONFIG_RTC_DRV_CMOS_MODULE
 EXPORT_SYMBOL(rtc_lock);
-#endif
 #endif	/* pc-style 'CMOS' RTC support */
 
 /* change this if you have some constant time drift */
@@ -114,56 +110,79 @@ void timer_tick(void)
 }
 #endif
 
-#if defined(CONFIG_PM) && !defined(CONFIG_GENERIC_CLOCKEVENTS)
-static int timer_suspend(struct sys_device *dev, pm_message_t state)
+static void dummy_clock_access(struct timespec *ts)
 {
-	struct sys_timer *timer = container_of(dev, struct sys_timer, dev);
+	ts->tv_sec = 0;
+	ts->tv_nsec = 0;
+}
 
-	if (timer->suspend != NULL)
-		timer->suspend();
+static clock_access_fn __read_persistent_clock = dummy_clock_access;
+static clock_access_fn __read_boot_clock = dummy_clock_access;;
+
+void read_persistent_clock(struct timespec *ts)
+{
+	__read_persistent_clock(ts);
+}
+
+void read_boot_clock(struct timespec *ts)
+{
+	__read_boot_clock(ts);
+}
+
+int __init register_persistent_clock(clock_access_fn read_boot,
+				     clock_access_fn read_persistent)
+{
+	/* Only allow the clockaccess functions to be registered once */
+	if (__read_persistent_clock == dummy_clock_access &&
+	    __read_boot_clock == dummy_clock_access) {
+		if (read_boot)
+			__read_boot_clock = read_boot;
+		if (read_persistent)
+			__read_persistent_clock = read_persistent;
+
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
+#if defined(CONFIG_PM) && !defined(CONFIG_GENERIC_CLOCKEVENTS)
+static int timer_suspend(void)
+{
+	if (system_timer->suspend)
+		system_timer->suspend();
 
 	return 0;
 }
 
-static int timer_resume(struct sys_device *dev)
+static void timer_resume(void)
 {
-	struct sys_timer *timer = container_of(dev, struct sys_timer, dev);
-
-	if (timer->resume != NULL)
-		timer->resume();
-
-	return 0;
+	if (system_timer->resume)
+		system_timer->resume();
 }
 #else
 #define timer_suspend NULL
 #define timer_resume NULL
 #endif
 
-static struct sysdev_class timer_sysclass = {
-	.name		= "timer",
+static struct syscore_ops timer_syscore_ops = {
 	.suspend	= timer_suspend,
 	.resume		= timer_resume,
 };
 
-static int __init timer_init_sysfs(void)
+static int __init timer_init_syscore_ops(void)
 {
-	int ret = sysdev_class_register(&timer_sysclass);
-	if (ret == 0) {
-		system_timer->dev.cls = &timer_sysclass;
-		ret = sysdev_register(&system_timer->dev);
-	}
+	register_syscore_ops(&timer_syscore_ops);
 
-	return ret;
+	return 0;
 }
 
-device_initcall(timer_init_sysfs);
+device_initcall(timer_init_syscore_ops);
 
 void __init time_init(void)
 {
 	system_timer = machine_desc->timer;
 	system_timer->init();
-#ifdef CONFIG_HAVE_SCHED_CLOCK
 	sched_clock_postinit();
-#endif
 }
 

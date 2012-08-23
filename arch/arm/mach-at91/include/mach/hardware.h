@@ -16,28 +16,50 @@
 
 #include <asm/sizes.h>
 
-#if defined(CONFIG_ARCH_AT91RM9200)
-#include <mach/at91rm9200.h>
-#elif defined(CONFIG_ARCH_AT91SAM9260) || defined(CONFIG_ARCH_AT91SAM9G20)
-#include <mach/at91sam9260.h>
-#elif defined(CONFIG_ARCH_AT91SAM9261) || defined(CONFIG_ARCH_AT91SAM9G10)
-#include <mach/at91sam9261.h>
-#elif defined(CONFIG_ARCH_AT91SAM9263)
-#include <mach/at91sam9263.h>
-#elif defined(CONFIG_ARCH_AT91SAM9RL)
-#include <mach/at91sam9rl.h>
-#elif defined(CONFIG_ARCH_AT91SAM9G45)
-#include <mach/at91sam9g45.h>
-#elif defined(CONFIG_ARCH_AT91CAP9)
-#include <mach/at91cap9.h>
-#elif defined(CONFIG_ARCH_AT91X40)
+/* DBGU base */
+/* rm9200, 9260/9g20, 9261/9g10, 9rl */
+#define AT91_BASE_DBGU0	0xfffff200
+/* 9263, 9g45 */
+#define AT91_BASE_DBGU1	0xffffee00
+
+#if defined(CONFIG_ARCH_AT91X40)
 #include <mach/at91x40.h>
-#elif defined(CONFIG_ARCH_AT572D940HF)
-#include <mach/at572d940hf.h>
 #else
-#error "Unsupported AT91 processor"
+#include <mach/at91rm9200.h>
+#include <mach/at91sam9260.h>
+#include <mach/at91sam9261.h>
+#include <mach/at91sam9263.h>
+#include <mach/at91sam9rl.h>
+#include <mach/at91sam9g45.h>
+#include <mach/at91sam9x5.h>
+#include <mach/at91sam9n12.h>
+
+/*
+ * On all at91 except rm9200 and x40 have the System Controller starts
+ * at address 0xffffc000 and has a size of 16KiB.
+ *
+ * On rm9200 it's start at 0xfffe4000 of 111KiB with non reserved data starting
+ * at 0xfffff000
+ *
+ * Removes the individual definitions of AT91_BASE_SYS and
+ * replaces them with a common version at base 0xfffffc000 and size 16KiB
+ * and map the same memory space
+ */
+#define AT91_BASE_SYS	0xffffc000
 #endif
 
+/*
+ * On all at91 have the Advanced Interrupt Controller starts at address
+ * 0xfffff000 and the Power Management Controller starts at 0xfffffc00
+ */
+#define AT91_AIC	0xfffff000
+#define AT91_PMC	0xfffffc00
+
+/*
+ * Peripheral identifiers/interrupts.
+ */
+#define AT91_ID_FIQ		0	/* Advanced Interrupt Controller (FIQ) */
+#define AT91_ID_SYS		1	/* System Peripherals */
 
 #ifdef CONFIG_MMU
 /*
@@ -63,7 +85,6 @@
  * Virtual to Physical Address mapping for IO devices.
  */
 #define AT91_VA_BASE_SYS	AT91_IO_P2V(AT91_BASE_SYS)
-#define AT91_VA_BASE_EMAC	AT91_IO_P2V(AT91RM9200_BASE_EMAC)
 
  /* Internal SRAM is mapped below the IO devices */
 #define AT91_SRAM_MAX		SZ_1M
@@ -81,13 +102,6 @@
 #define AT91_CHIPSELECT_5	0x60000000
 #define AT91_CHIPSELECT_6	0x70000000
 #define AT91_CHIPSELECT_7	0x80000000
-
-/* SDRAM */
-#ifdef CONFIG_DRAM_BASE
-#define AT91_SDRAM_BASE		CONFIG_DRAM_BASE
-#else
-#define AT91_SDRAM_BASE		AT91_CHIPSELECT_1
-#endif
 
 /* Clocks */
 #define AT91_SLOW_CLOCK		32768		/* slow clock */

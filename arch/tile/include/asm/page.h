@@ -16,19 +16,27 @@
 #define _ASM_TILE_PAGE_H
 
 #include <linux/const.h>
-#include <hv/pagesize.h>
+#include <hv/hypervisor.h>
+#include <arch/chip.h>
 
 /* PAGE_SHIFT and HPAGE_SHIFT determine the page sizes. */
-#define PAGE_SHIFT	HV_LOG2_PAGE_SIZE_SMALL
-#define HPAGE_SHIFT	HV_LOG2_PAGE_SIZE_LARGE
+#if defined(CONFIG_PAGE_SIZE_16KB)
+#define PAGE_SHIFT	14
+#define CTX_PAGE_FLAG	HV_CTX_PG_SM_16K
+#elif defined(CONFIG_PAGE_SIZE_64KB)
+#define PAGE_SHIFT	16
+#define CTX_PAGE_FLAG	HV_CTX_PG_SM_64K
+#else
+#define PAGE_SHIFT	HV_LOG2_DEFAULT_PAGE_SIZE_SMALL
+#define CTX_PAGE_FLAG	0
+#endif
+#define HPAGE_SHIFT	HV_LOG2_DEFAULT_PAGE_SIZE_LARGE
 
 #define PAGE_SIZE	(_AC(1, UL) << PAGE_SHIFT)
 #define HPAGE_SIZE	(_AC(1, UL) << HPAGE_SHIFT)
 
 #define PAGE_MASK	(~(PAGE_SIZE - 1))
 #define HPAGE_MASK	(~(HPAGE_SIZE - 1))
-
-#ifdef __KERNEL__
 
 /*
  * If the Kconfig doesn't specify, set a maximum zone order that
@@ -38,9 +46,6 @@
 #ifndef CONFIG_FORCE_MAX_ZONEORDER
 #define CONFIG_FORCE_MAX_ZONEORDER (HPAGE_SHIFT - PAGE_SHIFT + 1)
 #endif
-
-#include <hv/hypervisor.h>
-#include <arch/chip.h>
 
 #ifndef __ASSEMBLY__
 
@@ -82,14 +87,17 @@ typedef HV_PTE pgprot_t;
 /*
  * User L2 page tables are managed as one L2 page table per page,
  * because we use the page allocator for them.  This keeps the allocation
- * simple and makes it potentially useful to implement HIGHPTE at some point.
- * However, it's also inefficient, since L2 page tables are much smaller
+ * simple, but it's also inefficient, since L2 page tables are much smaller
  * than pages (currently 2KB vs 64KB).  So we should revisit this.
  */
 typedef struct page *pgtable_t;
 
 /* Must be a macro since it is used to create constants. */
 #define __pgprot(val) hv_pte(val)
+
+/* Rarely-used initializers, typically with a "zero" value. */
+#define __pte(x) hv_pte(x)
+#define __pgd(x) hv_pte(x)
 
 static inline u64 pgprot_val(pgprot_t pgprot)
 {
@@ -110,6 +118,8 @@ static inline u64 pgd_val(pgd_t pgd)
 
 typedef HV_PTE pmd_t;
 
+#define __pmd(x) hv_pte(x)
+
 static inline u64 pmd_val(pmd_t pmd)
 {
 	return hv_pte_val(pmd);
@@ -126,7 +136,7 @@ static inline __attribute_const__ int get_order(unsigned long size)
 
 #define HUGETLB_PAGE_ORDER	(HPAGE_SHIFT - PAGE_SHIFT)
 
-#define HUGE_MAX_HSTATE		2
+#define HUGE_MAX_HSTATE		6
 
 #ifdef CONFIG_HUGETLB_PAGE
 #define HAVE_ARCH_HUGETLB_UNMAPPED_AREA
@@ -318,7 +328,7 @@ static inline int pfn_valid(unsigned long pfn)
 
 /* Provide as macros since these require some other headers included. */
 #define page_to_pa(page) ((phys_addr_t)(page_to_pfn(page)) << PAGE_SHIFT)
-#define virt_to_page(kaddr) pfn_to_page(kaddr_to_pfn(kaddr))
+#define virt_to_page(kaddr) pfn_to_page(kaddr_to_pfn((void *)(kaddr)))
 #define page_to_virt(page) pfn_to_kaddr(page_to_pfn(page))
 
 struct mm_struct;
@@ -330,7 +340,5 @@ extern pte_t *virt_to_pte(struct mm_struct *mm, unsigned long addr);
 	(VM_READ | VM_WRITE | VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC)
 
 #include <asm-generic/memory_model.h>
-
-#endif /* __KERNEL__ */
 
 #endif /* _ASM_TILE_PAGE_H */

@@ -11,17 +11,18 @@
  *   NON INFRINGEMENT.  See the GNU General Public License for
  *   more details.
  *
- * Do not include directly; use <asm/atomic.h>.
+ * Do not include directly; use <linux/atomic.h>.
  */
 
 #ifndef _ASM_TILE_ATOMIC_32_H
 #define _ASM_TILE_ATOMIC_32_H
 
+#include <asm/barrier.h>
 #include <arch/chip.h>
 
 #ifndef __ASSEMBLY__
 
-/* Tile-specific routines to support <asm/atomic.h>. */
+/* Tile-specific routines to support <linux/atomic.h>. */
 int _atomic_xchg(atomic_t *v, int n);
 int _atomic_xchg_add(atomic_t *v, int i);
 int _atomic_xchg_add_unless(atomic_t *v, int a, int u);
@@ -81,18 +82,18 @@ static inline int atomic_add_return(int i, atomic_t *v)
 }
 
 /**
- * atomic_add_unless - add unless the number is already a given value
+ * __atomic_add_unless - add unless the number is already a given value
  * @v: pointer of type atomic_t
  * @a: the amount to add to v...
  * @u: ...unless v is equal to u.
  *
  * Atomically adds @a to @v, so long as @v was not already @u.
- * Returns non-zero if @v was not @u, and zero otherwise.
+ * Returns the old value of @v.
  */
-static inline int atomic_add_unless(atomic_t *v, int a, int u)
+static inline int __atomic_add_unless(atomic_t *v, int a, int u)
 {
 	smp_mb();  /* barrier for proper semantics */
-	return _atomic_xchg_add_unless(v, a, u) != u;
+	return _atomic_xchg_add_unless(v, a, u);
 }
 
 /**
@@ -109,16 +110,6 @@ static inline void atomic_set(atomic_t *v, int n)
 {
 	_atomic_xchg(v, n);
 }
-
-#define xchg(ptr, x) ((typeof(*(ptr))) \
-  ((sizeof(*(ptr)) == sizeof(atomic_t)) ? \
-   atomic_xchg((atomic_t *)(ptr), (long)(x)) : \
-   __xchg_called_with_bad_pointer()))
-
-#define cmpxchg(ptr, o, n) ((typeof(*(ptr))) \
-  ((sizeof(*(ptr)) == sizeof(atomic_t)) ? \
-   atomic_cmpxchg((atomic_t *)(ptr), (long)(o), (long)(n)) : \
-   __cmpxchg_called_with_bad_pointer()))
 
 /* A 64bit atomic type */
 
@@ -312,7 +303,14 @@ void __init_atomic_per_cpu(void);
 void __atomic_fault_unlock(int *lock_ptr);
 #endif
 
+/* Return a pointer to the lock for the given address. */
+int *__atomic_hashed_lock(volatile void *v);
+
 /* Private helper routines in lib/atomic_asm_32.S */
+struct __get_user {
+	unsigned long val;
+	int err;
+};
 extern struct __get_user __atomic_cmpxchg(volatile int *p,
 					  int *lock, int o, int n);
 extern struct __get_user __atomic_xchg(volatile int *p, int *lock, int n);
@@ -327,6 +325,9 @@ extern u64 __atomic64_xchg(volatile u64 *p, int *lock, u64 n);
 extern u64 __atomic64_xchg_add(volatile u64 *p, int *lock, u64 n);
 extern u64 __atomic64_xchg_add_unless(volatile u64 *p,
 				      int *lock, u64 o, u64 n);
+
+/* Return failure from the atomic wrappers. */
+struct __get_user __atomic_bad_address(int __user *addr);
 
 #endif /* !__ASSEMBLY__ */
 

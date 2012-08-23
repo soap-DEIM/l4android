@@ -5,6 +5,7 @@
 #include <linux/list.h>
 #include <linux/sched.h>
 #include <linux/timex.h>
+#include <linux/alarmtimer.h>
 
 union cpu_time_count {
 	cputime_t cpu;
@@ -80,6 +81,11 @@ struct k_itimer {
 			unsigned long incr;
 			unsigned long expires;
 		} mmtimer;
+		struct {
+			struct alarm alarmtimer;
+			ktime_t interval;
+		} alarm;
+		struct rcu_head rcu;
 	} it;
 };
 

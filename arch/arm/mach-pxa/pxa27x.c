@@ -11,12 +11,14 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
+#include <linux/gpio.h>
+#include <linux/gpio-pxa.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/suspend.h>
 #include <linux/platform_device.h>
-#include <linux/sysdev.h>
+#include <linux/syscore_ops.h>
 #include <linux/io.h>
 #include <linux/irq.h>
 #include <linux/i2c/pxa-i2c.h>
@@ -24,8 +26,8 @@
 #include <asm/mach/map.h>
 #include <mach/hardware.h>
 #include <asm/irq.h>
+#include <asm/suspend.h>
 #include <mach/irqs.h>
-#include <mach/gpio.h>
 #include <mach/pxa27x.h>
 #include <mach/reset.h>
 #include <mach/ohci.h>
@@ -227,6 +229,7 @@ static struct clk_lookup pxa27x_clkregs[] = {
 	INIT_CLKREG(&clk_pxa27x_im, NULL, "IMCLK"),
 	INIT_CLKREG(&clk_pxa27x_memc, NULL, "MEMCLK"),
 	INIT_CLKREG(&clk_pxa27x_mem, "pxa2xx-pcmcia", NULL),
+	INIT_CLKREG(&clk_dummy, "pxa-gpio", NULL),
 };
 
 #ifdef CONFIG_PM
@@ -284,6 +287,11 @@ void pxa27x_cpu_pm_restore(unsigned long *sleep_save)
 void pxa27x_cpu_pm_enter(suspend_state_t state)
 {
 	extern void pxa_cpu_standby(void);
+#ifndef CONFIG_IWMMXT
+	u64 acc0;
+
+	asm volatile("mra %Q0, %R0, acc0" : "=r" (acc0));
+#endif
 
 	/* ensure voltage-change sequencer not initiated, which hangs */
 	PCFR &= ~PCFR_FVC;
@@ -299,7 +307,10 @@ void pxa27x_cpu_pm_enter(suspend_state_t state)
 		pxa_cpu_standby();
 		break;
 	case PM_SUSPEND_MEM:
-		pxa27x_cpu_suspend(pwrmode, PLAT_PHYS_OFFSET - PAGE_OFFSET);
+		cpu_suspend(pwrmode, pxa27x_finish_suspend);
+#ifndef CONFIG_IWMMXT
+		asm volatile("mar acc0, %Q0, %R0" : "=r" (acc0));
+#endif
 		break;
 	}
 }
@@ -345,7 +356,7 @@ static inline void pxa27x_init_pm(void) {}
  */
 static int pxa27x_set_wake(struct irq_data *d, unsigned int on)
 {
-	int gpio = irq_to_gpio(d->irq);
+	int gpio = pxa_irq_to_gpio(d->irq);
 	uint32_t mask;
 
 	if (gpio >= 0 && gpio < 128)
@@ -376,12 +387,11 @@ static int pxa27x_set_wake(struct irq_data *d, unsigned int on)
 void __init pxa27x_init_irq(void)
 {
 	pxa_init_irq(34, pxa27x_set_wake);
-	pxa_init_gpio(IRQ_GPIO_2_x, 2, 120, pxa27x_set_wake);
 }
 
 static struct map_desc pxa27x_io_desc[] __initdata = {
 	{	/* Mem Ctl */
-		.virtual	= SMEMC_VIRT,
+		.virtual	= (unsigned long)SMEMC_VIRT,
 		.pfn		= __phys_to_pfn(PXA2XX_SMEMC_BASE),
 		.length		= 0x00200000,
 		.type		= MT_DEVICE
@@ -411,6 +421,10 @@ void __init pxa27x_set_i2c_power_info(struct i2c_pxa_platform_data *info)
 	pxa_register_device(&pxa27x_device_i2c_power, info);
 }
 
+static struct pxa_gpio_platform_data pxa27x_gpio_info __initdata = {
+	.gpio_set_wake = gpio_set_wake,
+};
+
 static struct platform_device *devices[] __initdata = {
 	&pxa27x_device_udc,
 	&pxa_device_pmu,
@@ -428,21 +442,9 @@ static struct platform_device *devices[] __initdata = {
 	&pxa27x_device_pwm1,
 };
 
-static struct sys_device pxa27x_sysdev[] = {
-	{
-		.cls	= &pxa_irq_sysclass,
-	}, {
-		.cls	= &pxa2xx_mfp_sysclass,
-	}, {
-		.cls	= &pxa_gpio_sysclass,
-	}, {
-		.cls	= &pxa2xx_clock_sysclass,
-	}
-};
-
 static int __init pxa27x_init(void)
 {
-	int i, ret = 0;
+	int ret = 0;
 
 	if (cpu_is_pxa27x()) {
 
@@ -455,12 +457,11 @@ static int __init pxa27x_init(void)
 
 		pxa27x_init_pm();
 
-		for (i = 0; i < ARRAY_SIZE(pxa27x_sysdev); i++) {
-			ret = sysdev_register(&pxa27x_sysdev[i]);
-			if (ret)
-				pr_err("failed to register sysdev[%d]\n", i);
-		}
+		register_syscore_ops(&pxa_irq_syscore_ops);
+		register_syscore_ops(&pxa2xx_mfp_syscore_ops);
+		register_syscore_ops(&pxa2xx_clock_syscore_ops);
 
+		pxa_register_device(&pxa_device_gpio, &pxa27x_gpio_info);
 		ret = platform_add_devices(devices, ARRAY_SIZE(devices));
 	}
 

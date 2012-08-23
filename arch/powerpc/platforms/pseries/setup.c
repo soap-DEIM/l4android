@@ -34,11 +34,12 @@
 #include <linux/pci.h>
 #include <linux/utsname.h>
 #include <linux/adb.h>
-#include <linux/module.h>
+#include <linux/export.h>
 #include <linux/delay.h>
 #include <linux/irq.h>
 #include <linux/seq_file.h>
 #include <linux/root_dev.h>
+#include <linux/cpuidle.h>
 
 #include <asm/mmu.h>
 #include <asm/processor.h>
@@ -53,9 +54,9 @@
 #include <asm/irq.h>
 #include <asm/time.h>
 #include <asm/nvram.h>
-#include "xics.h"
 #include <asm/pmc.h>
 #include <asm/mpic.h>
+#include <asm/xics.h>
 #include <asm/ppc-pci.h>
 #include <asm/i8259.h>
 #include <asm/udbg.h>
@@ -73,9 +74,6 @@ unsigned long CMO_PageSize = (ASM_CONST(1) << IOMMU_PAGE_SHIFT);
 EXPORT_SYMBOL(CMO_PageSize);
 
 int fwnmi_active;  /* TRUE if an FWNMI handler is present */
-
-static void pseries_shared_idle_sleep(void);
-static void pseries_dedicated_idle_sleep(void);
 
 static struct device_node *pSeries_mpic_node;
 
@@ -193,9 +191,7 @@ static void __init pseries_mpic_init_IRQ(void)
 
 	/* Setup the openpic driver */
 	mpic = mpic_alloc(pSeries_mpic_node, openpic_addr,
-			  MPIC_PRIMARY,
-			  16, 250, /* isu size, irq count */
-			  " MPIC     ");
+			MPIC_NO_RESET, 16, 0, " MPIC     ");
 	BUG_ON(mpic == NULL);
 
 	/* Add ISUs */
@@ -204,6 +200,9 @@ static void __init pseries_mpic_init_IRQ(void)
 		unsigned long isuaddr = of_read_number(opprop + i, naddr);
 		mpic_assign_isu(mpic, n, isuaddr);
 	}
+
+	/* Setup top-level get_irq */
+	ppc_md.get_irq = mpic_get_irq;
 
 	/* All ISUs are setup, complete initialization */
 	mpic_init(mpic);
@@ -214,7 +213,7 @@ static void __init pseries_mpic_init_IRQ(void)
 
 static void __init pseries_xics_init_IRQ(void)
 {
-	xics_init_IRQ();
+	xics_init();
 	pseries_setup_i8259_cascade();
 }
 
@@ -238,7 +237,6 @@ static void __init pseries_discover_pic(void)
 		if (strstr(typep, "open-pic")) {
 			pSeries_mpic_node = of_node_get(np);
 			ppc_md.init_IRQ       = pseries_mpic_init_IRQ;
-			ppc_md.get_irq        = mpic_get_irq;
 			setup_kexec_cpu_down_mpic();
 			smp_init_pseries_mpic();
 			return;
@@ -262,8 +260,12 @@ static int pci_dn_reconfig_notifier(struct notifier_block *nb, unsigned long act
 	switch (action) {
 	case PSERIES_RECONFIG_ADD:
 		pci = np->parent->data;
-		if (pci)
+		if (pci) {
 			update_dn_pci_info(np, pci->phb);
+
+			/* Create EEH device for the OF node */
+			eeh_dev_init(np, pci->phb);
+		}
 		break;
 	default:
 		err = NOTIFY_DONE;
@@ -276,6 +278,8 @@ static struct notifier_block pci_dn_reconfig_nb = {
 	.notifier_call = pci_dn_reconfig_notifier,
 };
 
+struct kmem_cache *dtl_cache;
+
 #ifdef CONFIG_VIRT_CPU_ACCOUNTING
 /*
  * Allocate space for the dispatch trace log for all possible cpus
@@ -287,18 +291,12 @@ static int alloc_dispatch_logs(void)
 	int cpu, ret;
 	struct paca_struct *pp;
 	struct dtl_entry *dtl;
-	struct kmem_cache *dtl_cache;
 
 	if (!firmware_has_feature(FW_FEATURE_SPLPAR))
 		return 0;
 
-	dtl_cache = kmem_cache_create("dtl", DISPATCH_LOG_BYTES,
-						DISPATCH_LOG_BYTES, 0, NULL);
-	if (!dtl_cache) {
-		pr_warn("Failed to create dispatch trace log buffer cache\n");
-		pr_warn("Stolen time statistics will be unreliable\n");
+	if (!dtl_cache)
 		return 0;
-	}
 
 	for_each_possible_cpu(cpu) {
 		pp = &paca[cpu];
@@ -326,18 +324,53 @@ static int alloc_dispatch_logs(void)
 	dtl->enqueue_to_dispatch_time = DISPATCH_LOG_BYTES;
 	ret = register_dtl(hard_smp_processor_id(), __pa(dtl));
 	if (ret)
-		pr_warn("DTL registration failed for boot cpu %d (%d)\n",
-			smp_processor_id(), ret);
+		pr_err("WARNING: DTL registration of cpu %d (hw %d) failed "
+		       "with %d\n", smp_processor_id(),
+		       hard_smp_processor_id(), ret);
 	get_paca()->lppaca_ptr->dtl_enable_mask = 2;
 
 	return 0;
 }
-
-early_initcall(alloc_dispatch_logs);
+#else /* !CONFIG_VIRT_CPU_ACCOUNTING */
+static inline int alloc_dispatch_logs(void)
+{
+	return 0;
+}
 #endif /* CONFIG_VIRT_CPU_ACCOUNTING */
+
+static int alloc_dispatch_log_kmem_cache(void)
+{
+	dtl_cache = kmem_cache_create("dtl", DISPATCH_LOG_BYTES,
+						DISPATCH_LOG_BYTES, 0, NULL);
+	if (!dtl_cache) {
+		pr_warn("Failed to create dispatch trace log buffer cache\n");
+		pr_warn("Stolen time statistics will be unreliable\n");
+		return 0;
+	}
+
+	return alloc_dispatch_logs();
+}
+early_initcall(alloc_dispatch_log_kmem_cache);
+
+static void pSeries_idle(void)
+{
+	/* This would call on the cpuidle framework, and the back-end pseries
+	 * driver to  go to idle states
+	 */
+	if (cpuidle_idle_call()) {
+		/* On error, execute default handler
+		 * to go into low thread priority and possibly
+		 * low power mode.
+		 */
+		HMT_low();
+		HMT_very_low();
+	}
+}
 
 static void __init pSeries_setup_arch(void)
 {
+	panic_timeout = 10;
+
 	/* Discover PIC type and setup ppc_md accordingly */
 	pseries_discover_pic();
 
@@ -350,26 +383,21 @@ static void __init pSeries_setup_arch(void)
 
 	fwnmi_init();
 
+	/* By default, only probe PCI (can be overriden by rtas_pci) */
+	pci_add_flags(PCI_PROBE_ONLY);
+
 	/* Find and initialize PCI host bridges */
 	init_pci_config_tokens();
+	eeh_pseries_init();
 	find_and_init_phbs();
 	pSeries_reconfig_notifier_register(&pci_dn_reconfig_nb);
 	eeh_init();
 
 	pSeries_nvram_init();
 
-	/* Choose an idle loop */
 	if (firmware_has_feature(FW_FEATURE_SPLPAR)) {
 		vpa_init(boot_cpuid);
-		if (get_lppaca()->shared_proc) {
-			printk(KERN_DEBUG "Using shared processor idle loop\n");
-			ppc_md.power_save = pseries_shared_idle_sleep;
-		} else {
-			printk(KERN_DEBUG "Using dedicated idle loop\n");
-			ppc_md.power_save = pseries_dedicated_idle_sleep;
-		}
-	} else {
-		printk(KERN_DEBUG "Using default idle loop\n");
+		ppc_md.power_save = pSeries_idle;
 	}
 
 	if (firmware_has_feature(FW_FEATURE_LPAR))
@@ -402,6 +430,16 @@ static int pseries_set_xdabr(unsigned long dabr)
 
 #define CMO_CHARACTERISTICS_TOKEN 44
 #define CMO_MAXLENGTH 1026
+
+void pSeries_coalesce_init(void)
+{
+	struct hvcall_mpp_x_data mpp_x_data;
+
+	if (firmware_has_feature(FW_FEATURE_CMO) && !h_get_mpp_x(&mpp_x_data))
+		powerpc_firmware_features |= FW_FEATURE_XCMO;
+	else
+		powerpc_firmware_features &= ~FW_FEATURE_XCMO;
+}
 
 /**
  * fw_cmo_feature_init - FW_FEATURE_CMO is not stored in ibm,hypertas-functions,
@@ -472,6 +510,7 @@ void pSeries_cmo_feature_init(void)
 		pr_debug("CMO enabled, PrPSP=%d, SecPSP=%d\n", CMO_PrPSP,
 		         CMO_SecPSP);
 		powerpc_firmware_features |= FW_FEATURE_CMO;
+		pSeries_coalesce_init();
 	} else
 		pr_debug("CMO not enabled, PrPSP=%d, SecPSP=%d\n", CMO_PrPSP,
 		         CMO_SecPSP);
@@ -486,9 +525,10 @@ static void __init pSeries_init_early(void)
 {
 	pr_debug(" -> pSeries_init_early()\n");
 
+#ifdef CONFIG_HVC_CONSOLE
 	if (firmware_has_feature(FW_FEATURE_LPAR))
-		find_udbg_vterm();
-
+		hvc_vio_init_early();
+#endif
 	if (firmware_has_feature(FW_FEATURE_DABR))
 		ppc_md.set_dabr = pseries_set_dabr;
 	else if (firmware_has_feature(FW_FEATURE_XDABR))
@@ -556,80 +596,6 @@ static int __init pSeries_probe(void)
 	         (powerpc_firmware_features & FW_FEATURE_LPAR) ? "" : " not");
 
 	return 1;
-}
-
-
-DECLARE_PER_CPU(long, smt_snooze_delay);
-
-static void pseries_dedicated_idle_sleep(void)
-{ 
-	unsigned int cpu = smp_processor_id();
-	unsigned long start_snooze;
-	unsigned long in_purr, out_purr;
-	long snooze = __get_cpu_var(smt_snooze_delay);
-
-	/*
-	 * Indicate to the HV that we are idle. Now would be
-	 * a good time to find other work to dispatch.
-	 */
-	get_lppaca()->idle = 1;
-	get_lppaca()->donate_dedicated_cpu = 1;
-	in_purr = mfspr(SPRN_PURR);
-
-	/*
-	 * We come in with interrupts disabled, and need_resched()
-	 * has been checked recently.  If we should poll for a little
-	 * while, do so.
-	 */
-	if (snooze) {
-		start_snooze = get_tb() + snooze * tb_ticks_per_usec;
-		local_irq_enable();
-		set_thread_flag(TIF_POLLING_NRFLAG);
-
-		while ((snooze < 0) || (get_tb() < start_snooze)) {
-			if (need_resched() || cpu_is_offline(cpu))
-				goto out;
-			ppc64_runlatch_off();
-			HMT_low();
-			HMT_very_low();
-		}
-
-		HMT_medium();
-		clear_thread_flag(TIF_POLLING_NRFLAG);
-		smp_mb();
-		local_irq_disable();
-		if (need_resched() || cpu_is_offline(cpu))
-			goto out;
-	}
-
-	cede_processor();
-
-out:
-	HMT_medium();
-	out_purr = mfspr(SPRN_PURR);
-	get_lppaca()->wait_state_cycles += out_purr - in_purr;
-	get_lppaca()->donate_dedicated_cpu = 0;
-	get_lppaca()->idle = 0;
-}
-
-static void pseries_shared_idle_sleep(void)
-{
-	/*
-	 * Indicate to the HV that we are idle. Now would be
-	 * a good time to find other work to dispatch.
-	 */
-	get_lppaca()->idle = 1;
-
-	/*
-	 * Yield the processor to the hypervisor.  We return if
-	 * an external interrupt occurs (which are driven prior
-	 * to returning here) or if a prod occurs from another
-	 * processor. When returning here, external interrupts
-	 * are enabled.
-	 */
-	cede_processor();
-
-	get_lppaca()->idle = 0;
 }
 
 static int pSeries_pci_probe_mode(struct pci_bus *bus)

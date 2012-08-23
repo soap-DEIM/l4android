@@ -7,17 +7,14 @@
  *      2 of the License, or (at your option) any later version.
  */
 
-#include <linux/threads.h>
-#include <linux/module.h>
+#include <linux/smp.h>
+#include <linux/export.h>
 #include <linux/memblock.h>
 
-#include <asm/firmware.h>
 #include <asm/lppaca.h>
 #include <asm/paca.h>
 #include <asm/sections.h>
 #include <asm/pgtable.h>
-#include <asm/iseries/lpar_map.h>
-#include <asm/iseries/hv_types.h>
 #include <asm/kexec.h>
 
 /* This symbol is provided by the linker - let it fill in the paca
@@ -30,8 +27,8 @@ extern unsigned long __toc_start;
  * The structure which the hypervisor knows about - this structure
  * should not cross a page boundary.  The vpa_init/register_vpa call
  * is now known to fail if the lppaca structure crosses a page
- * boundary.  The lppaca is also used on legacy iSeries and POWER5
- * pSeries boxes.  The lppaca is 640 bytes long, and cannot readily
+ * boundary.  The lppaca is also used on POWER5 pSeries boxes.
+ * The lppaca is 640 bytes long, and cannot readily
  * change since the hypervisor knows its layout, so a 1kB alignment
  * will suffice to ensure that it doesn't cross a page boundary.
  */
@@ -39,10 +36,7 @@ struct lppaca lppaca[] = {
 	[0 ... (NR_LPPACAS-1)] = {
 		.desc = 0xd397d781,	/* "LpPa" */
 		.size = sizeof(struct lppaca),
-		.dyn_proc_status = 2,
-		.decr_val = 0x00ff0000,
 		.fpregs_in_use = 1,
-		.end_of_quantum = 0xfffffffffffffffful,
 		.slb_count = 64,
 		.vmxregs_in_use = 0,
 		.page_ins = 0,
@@ -156,46 +150,49 @@ void __init initialise_paca(struct paca_struct *new_paca, int cpu)
 /* Put the paca pointer into r13 and SPRG_PACA */
 void setup_paca(struct paca_struct *new_paca)
 {
+	/* Setup r13 */
 	local_paca = new_paca;
-	mtspr(SPRN_SPRG_PACA, local_paca);
+
 #ifdef CONFIG_PPC_BOOK3E
+	/* On Book3E, initialize the TLB miss exception frames */
 	mtspr(SPRN_SPRG_TLB_EXFRAME, local_paca->extlb);
+#else
+	/* In HV mode, we setup both HPACA and PACA to avoid problems
+	 * if we do a GET_PACA() before the feature fixups have been
+	 * applied
+	 */
+	if (cpu_has_feature(CPU_FTR_HVMODE))
+		mtspr(SPRN_SPRG_HPACA, local_paca);
 #endif
+	mtspr(SPRN_SPRG_PACA, local_paca);
+
 }
 
 static int __initdata paca_size;
 
 void __init allocate_pacas(void)
 {
-	int nr_cpus, cpu, limit;
+	int cpu, limit;
 
 	/*
 	 * We can't take SLB misses on the paca, and we want to access them
 	 * in real mode, so allocate them within the RMA and also within
-	 * the first segment. On iSeries they must be within the area mapped
-	 * by the HV, which is HvPagesToMap * HVPAGESIZE bytes.
+	 * the first segment.
 	 */
 	limit = min(0x10000000ULL, ppc64_rma_size);
-	if (firmware_has_feature(FW_FEATURE_ISERIES))
-		limit = min(limit, HvPagesToMap * HVPAGESIZE);
 
-	nr_cpus = NR_CPUS;
-	/* On iSeries we know we can never have more than 64 cpus */
-	if (firmware_has_feature(FW_FEATURE_ISERIES))
-		nr_cpus = min(64, nr_cpus);
-
-	paca_size = PAGE_ALIGN(sizeof(struct paca_struct) * nr_cpus);
+	paca_size = PAGE_ALIGN(sizeof(struct paca_struct) * nr_cpu_ids);
 
 	paca = __va(memblock_alloc_base(paca_size, PAGE_SIZE, limit));
 	memset(paca, 0, paca_size);
 
 	printk(KERN_DEBUG "Allocated %u bytes for %d pacas at %p\n",
-		paca_size, nr_cpus, paca);
+		paca_size, nr_cpu_ids, paca);
 
-	allocate_lppacas(nr_cpus, limit);
+	allocate_lppacas(nr_cpu_ids, limit);
 
 	/* Can't use for_each_*_cpu, as they aren't functional yet */
-	for (cpu = 0; cpu < nr_cpus; cpu++)
+	for (cpu = 0; cpu < nr_cpu_ids; cpu++)
 		initialise_paca(&paca[cpu], cpu);
 }
 

@@ -22,7 +22,6 @@
 
 #undef DEBUG
 
-#include <linux/module.h>
 #include <linux/errno.h>
 #include <linux/sched.h>
 #include <linux/kernel.h>
@@ -141,7 +140,7 @@ void __spu_update_sched_info(struct spu_context *ctx)
 	 * runqueue. The context will be rescheduled on the proper node
 	 * if it is timesliced or preempted.
 	 */
-	ctx->cpus_allowed = current->cpus_allowed;
+	cpumask_copy(&ctx->cpus_allowed, tsk_cpus_allowed(current));
 
 	/* Save the current cpu id for spu interrupt routing. */
 	ctx->last_ran = raw_smp_processor_id();
