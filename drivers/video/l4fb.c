@@ -795,6 +795,9 @@ l4fb_new_input_device(struct l4fb_screen *screen, l4_umword_t id)
 	COPY_BM(REL, rel);
 #undef COPY_BM
 
+	if(input->touchscreen && test_bit(BTN_MOUSE, dev->keybit))
+		set_bit(BTN_TOUCH, dev->keybit);
+
 	bitmap_copy(dev->propbit, sinfo.propbits,
 	            min(INPUT_PROP_MAX, L4RE_EVENT_PROP_MAX) + 1);
 
